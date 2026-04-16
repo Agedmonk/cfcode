@@ -1,0 +1,51 @@
+name: Sync and Modify EdgeTunnel Worker
+
+on:
+  schedule:
+    # 每天 UTC 时间 0:00 触发（北京时间早上 8:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 允许在 Actions 页面手动点击运行
+
+jobs:
+  update-worker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 赋予推送代码的权限
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download and Modify _worker.js
+        run: |
+          # 1. 下载原仓库的 _worker.js 文件（使用 raw.githubusercontent.com 获取原始代码）
+          curl -sL "https://raw.githubusercontent.com/cmliu/edgetunnel/main/_worker.js" -o _worker.js
+
+          # 2. 修改“管理员密码”行：匹配分号前的内容并在其后追加 || 'NicholasLai'
+          sed -i "s/^\([[:space:]]*const 管理员密码 = .*\);/\1 || 'NicholasLai';/" _worker.js
+
+          # 3. 修改“envUUID”行：匹配分号前的内容并在其后追加 UUID
+          sed -i "s/^\([[:space:]]*const envUUID = .*\);/\1 || '226279dd-28b2-4b61-96be-a2a0b1afd522';/" _worker.js
+
+      - name: Compress to Zip
+        run: |
+          # 将修改后的 _worker.js 压缩为 _worker.zip
+          zip _worker.zip _worker.js
+
+      - name: Commit and Push Changes
+        run: |
+          # 配置 Git 机器人信息
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 暂存生成的文件
+          git add _worker.js _worker.zip
+          
+          # 检查文件是否有变更，有变更则提交并推送到当前仓库
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-sync and modify _worker.js from edgetunnel"
+            git push
+            echo "✅ 代码已成功拉取、修改并推送到仓库。"
+          else
+            echo "⏸️ 远程代码无变化，无需提交。"
+          fi
