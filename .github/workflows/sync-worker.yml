@@ -29,8 +29,8 @@ jobs:
 
       - name: Compress to Zip
         run: |
-          # 将修改后的 _worker.js 压缩为 _worker.zip
-          zip _worker.zip _worker.js
+          # 将修改后的 _worker.js 压缩为 worker.zip
+          zip worker.zip _worker.js
 
       - name: Commit and Push Changes
         run: |
@@ -39,7 +39,7 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           
           # 暂存生成的文件
-          git add _worker.js _worker.zip
+          git add _worker.js worker.zip
           
           # 检查文件是否有变更，有变更则提交并推送到当前仓库
           if ! git diff --staged --quiet; then
