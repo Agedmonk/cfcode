@@ -38,7 +38,7 @@ jobs:
           git add install.zip
           
           # 提交更改（如果文件没有任何内容变化，commit 会报错退出，因此使用 || echo 忽略报错，让流水线继续绿灯）
-          git commit -m "Auto-generate install.zip from install.js" || echo "No changes to commit"
+          git commit -m "自动执行打包install项目" || echo "No changes to commit"
           
           # 推送到当前分支
           git push
