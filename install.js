@@ -1,4 +1,4 @@
-//2026-08-17 1645
+//2026-08-17 1658
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -890,9 +890,9 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         </div>
       </div>
 
-      <div style="text-align:center; margin-top:24px;">
-        <a href="/dashboard" class="link-button">📋 常用部署</a>
-		<a href="/logout" class="link-button">🚪 退出系统</a>
+      <div style="text-align:center; margin-top:24px; display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+        <a href="/dashboard" class="link-button" style="margin-top:0;">📋 常用部署</a>
+        <a href="/logout" class="link-button" style="margin-top:0; background: #e74c3c;">🚪 退出系统</a>
       </div>
     </div>
   </div>
