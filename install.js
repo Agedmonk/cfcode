@@ -1,4 +1,4 @@
-//2026-08-18 0600
+//2026-08-18 0639
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1340,7 +1340,8 @@ function getAccountsPage() {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: var(--text);
     }
-    .container { width: 100%; max-width: 800px; }
+    /* 扩大整体容器宽度 */
+    .container { width: 100%; max-width: 1000px; }
     .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; }
     h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; color: #222; text-align: center; }
     
@@ -1358,19 +1359,18 @@ function getAccountsPage() {
       transition: background 0.2s; user-select: none;
     }
     .account-header:hover { background: #f0f2f5; }
-    .account-header-left { display: flex; align-items: center; gap: 10px; }
-    .account-header-left h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--text); }
-    .account-header-right { display: flex; align-items: center; gap: 8px; }
+    
+    /* 优化头部左右两侧的布局，防止文字过长挤走按钮 */
+    .account-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+    .account-header-left h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .account-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     
     .project-list { display: none; padding: 20px; border-top: 1px solid var(--border); background: #fafbfc; }
     .project-list.active { display: block; }
     
     .project-detail { background: #fff; border: 1px solid #eee; padding: 10px 12px; margin: 5px 0; border-radius: 6px; font-size: 13px; color: var(--text-light); display: flex; justify-content: space-between; align-items: center; }
-    
-    /* ======== 修复长文本溢出和按钮被挤走的问题 ======== */
     .project-detail-info { flex: 1; min-width: 0; word-break: break-all; overflow-wrap: break-word; }
     .project-detail-actions { display: flex; gap: 5px; margin-left: 10px; flex-shrink: 0; }
-    /* ================================================= */
 
     .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: background 0.2s; color: #fff;}
     .btn-primary { background: var(--primary); } .btn-primary:hover { background: var(--primary-hover); }
@@ -1427,6 +1427,7 @@ function getAccountsPage() {
       <div class="form-group"><label>Account ID</label><input type="text" id="editAccountId"></div>
       <div class="form-group"><label>API Token</label><input type="password" id="editToken"></div>
       
+      <!-- 账户级显示控制开关 -->
       <div class="form-group">
         <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none; font-size:14px; color:#333;">
           <input type="checkbox" id="editAccountShow" style="width:auto;" checked>
@@ -1521,9 +1522,10 @@ function getAccountsPage() {
         const moveUpDisabled = accIdx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
         const moveDownDisabled = accIdx === accounts.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
 
+        // 移除左侧的展开箭头 <span class="arrow">▶</span>
         div.innerHTML = '<div class="account-header">' +
           '<div class="account-header-left">' +
-            '<span class="arrow">▶</span><h3>' + escapeHtml(account.identifier) + accShowTag + '</h3>' +
+            '<h3>' + escapeHtml(account.identifier) + accShowTag + '</h3>' +
           '</div>' +
           '<div class="account-header-right">' +
             '<button class="btn btn-icon move-acc-up" ' + moveUpDisabled + ' data-idx="' + accIdx + '">▲</button>' +
@@ -1571,13 +1573,12 @@ function getAccountsPage() {
         container.appendChild(div);
       });
 
+      // 绑定展开/折叠事件（因为去掉了箭头，我们直接让点击 header 即可切换）
       document.querySelectorAll('.account-header').forEach(header => {
         header.addEventListener('click', function(e) {
           if (e.target.tagName === 'BUTTON') return;
           const list = this.nextElementSibling;
           list.classList.toggle('active');
-          const arrow = this.querySelector('.arrow');
-          if (arrow) arrow.textContent = list.classList.contains('active') ? '▼' : '▶';
         });
       });
 
@@ -1661,7 +1662,7 @@ function getAccountsPage() {
     function openAdd() {
       editingIdentifier = null; document.getElementById('modalTitle').textContent = '添加账户';
       document.getElementById('editIdentifier').value = ''; document.getElementById('editAccountId').value = ''; document.getElementById('editToken').value = '';
-      document.getElementById('editAccountShow').checked = true; // 默认添加时勾选显示
+      document.getElementById('editAccountShow').checked = true;
       document.getElementById('workerList').innerHTML = ''; document.getElementById('pagesList').innerHTML = '';
       document.getElementById('editModal').classList.add('active');
     }
@@ -1672,7 +1673,6 @@ function getAccountsPage() {
       editingIdentifier = identifier; document.getElementById('modalTitle').textContent = '编辑账户: ' + identifier;
       document.getElementById('editIdentifier').value = account.identifier; document.getElementById('editAccountId').value = account.accountId; document.getElementById('editToken').value = account.token;
       
-      // 读取账户级 show 属性（兼容老数据默认 true）
       document.getElementById('editAccountShow').checked = account.show !== false;
       
       const wl = document.getElementById('workerList'); wl.innerHTML = ''; (account.workers || []).forEach(w => addWorkerRow(w.name, w.kvName, w.codeUrl, w.kvAction, w.show));
