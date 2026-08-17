@@ -1,4 +1,4 @@
-//2026-08-18 0543
+//2026-08-18 0600
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -68,9 +68,6 @@ export default {
       if (request.method === "POST") return handlePostAccount(request, env);
       if (request.method === "DELETE") return handleDeleteAccount(url, env);
     }
-    if (path === "/api/accounts/reorder" && request.method === "POST") {
-      return handleReorderAccounts(request, env);
-    }
 	// === 新数据备份、恢复、导出、导入 API ===
     if (path === "/api/accounts/backup") {
       if (request.method === "GET") return handleListBackups(env);
@@ -121,19 +118,6 @@ async function saveAccountsList(env, accounts) {
 async function findAccountIndex(env, identifier) {
   const accounts = await getAccountsList(env);
   return { accounts, idx: accounts.findIndex(a => a.identifier === identifier) };
-}
-
-async function handleReorderAccounts(request, env) {
-  try {
-    const { accounts } = await request.json();
-    if (!Array.isArray(accounts)) {
-      return new Response(JSON.stringify({ success: false, error: "数据格式不正确" }), { status: 400, headers: { "Content-Type": "application/json" } });
-    }
-    await saveAccountsList(env, accounts);
-    return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
-  } catch (e) {
-    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
-  }
 }
 
 // ==================== Worker 部署核心 ====================
@@ -1382,8 +1366,11 @@ function getAccountsPage() {
     .project-list.active { display: block; }
     
     .project-detail { background: #fff; border: 1px solid #eee; padding: 10px 12px; margin: 5px 0; border-radius: 6px; font-size: 13px; color: var(--text-light); display: flex; justify-content: space-between; align-items: center; }
-    .project-detail-info { flex: 1; }
-    .project-detail-actions { display: flex; gap: 5px; margin-left: 10px; }
+    
+    /* ======== 修复长文本溢出和按钮被挤走的问题 ======== */
+    .project-detail-info { flex: 1; min-width: 0; word-break: break-all; overflow-wrap: break-word; }
+    .project-detail-actions { display: flex; gap: 5px; margin-left: 10px; flex-shrink: 0; }
+    /* ================================================= */
 
     .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: background 0.2s; color: #fff;}
     .btn-primary { background: var(--primary); } .btn-primary:hover { background: var(--primary-hover); }
@@ -1440,7 +1427,6 @@ function getAccountsPage() {
       <div class="form-group"><label>Account ID</label><input type="text" id="editAccountId"></div>
       <div class="form-group"><label>API Token</label><input type="password" id="editToken"></div>
       
-      <!-- 账户级显示控制开关 -->
       <div class="form-group">
         <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none; font-size:14px; color:#333;">
           <input type="checkbox" id="editAccountShow" style="width:auto;" checked>
