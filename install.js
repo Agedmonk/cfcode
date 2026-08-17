@@ -1,4 +1,4 @@
-//2026-08-17 1504
+//2026-08-17 1645
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1098,12 +1098,15 @@ function getDashboardPage() {
     function renderAccounts() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
-      if (allAccounts.length === 0) {
-        container.innerHTML = '<p style="text-align:center; color:#666;">暂无账户，请先到账户设置添加。</p>';
-        return;
-      }
+      
+      let visibleCount = 0;
       
       allAccounts.forEach((account, accIndex) => {
+        // 如果账户级设置为不显示，则直接跳过渲染该账户
+        if (account.show === false) return;
+        
+        visibleCount++;
+
         // 过滤出设置为“显示”的项目
         const activeWorkers = account.workers ? account.workers.filter(w => w.show !== false) : [];
         const activePages = account.pages ? account.pages.filter(p => p.show !== false) : [];
@@ -1153,6 +1156,11 @@ function getDashboardPage() {
           '</div>';
         container.appendChild(accDiv);
       });
+      
+      if (visibleCount === 0) {
+        container.innerHTML = '<p style="text-align:center; color:#666;">暂无需要显示的账户，请前往账户设置添加或开启显示。</p>';
+        return;
+      }
 
       // 绑定临时部署模块的 KV 输入事件以联动下拉框
       document.querySelectorAll('.temp-kv').forEach(input => {
@@ -1364,8 +1372,8 @@ function getAccountsPage() {
     .modal-content { background: #fff; padding: 25px; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
     .form-group { margin-bottom: 15px; }
     label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--text-light); }
-    input, select { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; }
-    input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243,128,32,0.15); }
+    input[type="text"], input[type="password"], select { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; }
+    input[type="text"]:focus, input[type="password"]:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243,128,32,0.15); }
     select:disabled { background: #f5f5f5; color: #a0a0a0; cursor: not-allowed; }
     
     .dynamic-list { margin-top: 10px; }
@@ -1407,6 +1415,15 @@ function getAccountsPage() {
       <div class="form-group"><label>标识 (唯一名称)</label><input type="text" id="editIdentifier"></div>
       <div class="form-group"><label>Account ID</label><input type="text" id="editAccountId"></div>
       <div class="form-group"><label>API Token</label><input type="password" id="editToken"></div>
+      
+      <!-- 账户级显示控制开关 -->
+      <div class="form-group">
+        <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none; font-size:14px; color:#333;">
+          <input type="checkbox" id="editAccountShow" style="width:auto;" checked>
+          在常用部署页面显示此账户
+        </label>
+      </div>
+      
       <div class="form-group"><label>Workers</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">添加 Worker</button></div>
       <div class="form-group"><label>Pages</label><div id="pagesList" class="dynamic-list"></div><button id="btnAddPage" class="add-btn">添加 Pages</button></div>
       <div style="display:flex; gap:10px; margin-top:20px;">
@@ -1450,9 +1467,12 @@ function getAccountsPage() {
       accounts.forEach(account => {
         const div = document.createElement('div'); div.className = 'account-item';
         
+        // 判断账户级是否隐藏，加上提示
+        const accShowTag = account.show !== false ? '' : ' <span style="color:#e74c3c; font-size:14px; font-weight:normal;">[已隐藏]</span>';
+
         div.innerHTML = '<div class="account-header">' +
           '<div class="account-header-left">' +
-            '<span class="arrow">▶</span><h3>' + escapeHtml(account.identifier) + '</h3>' +
+            '<span class="arrow">▶</span><h3>' + escapeHtml(account.identifier) + accShowTag + '</h3>' +
           '</div>' +
           '<div class="account-header-right">' +
             '<button class="btn btn-sm btn-primary edit-btn" data-identifier="' + escapeHtml(account.identifier) + '">编辑</button> ' +
@@ -1566,6 +1586,7 @@ function getAccountsPage() {
     function openAdd() {
       editingIdentifier = null; document.getElementById('modalTitle').textContent = '添加账户';
       document.getElementById('editIdentifier').value = ''; document.getElementById('editAccountId').value = ''; document.getElementById('editToken').value = '';
+      document.getElementById('editAccountShow').checked = true; // 默认添加时勾选显示
       document.getElementById('workerList').innerHTML = ''; document.getElementById('pagesList').innerHTML = '';
       document.getElementById('editModal').classList.add('active');
     }
@@ -1575,6 +1596,10 @@ function getAccountsPage() {
       if (!account) return;
       editingIdentifier = identifier; document.getElementById('modalTitle').textContent = '编辑账户: ' + identifier;
       document.getElementById('editIdentifier').value = account.identifier; document.getElementById('editAccountId').value = account.accountId; document.getElementById('editToken').value = account.token;
+      
+      // 读取账户级 show 属性（兼容老数据默认 true）
+      document.getElementById('editAccountShow').checked = account.show !== false;
+      
       const wl = document.getElementById('workerList'); wl.innerHTML = ''; (account.workers || []).forEach(w => addWorkerRow(w.name, w.kvName, w.codeUrl, w.kvAction, w.show));
       const pl = document.getElementById('pagesList'); pl.innerHTML = ''; (account.pages || []).forEach(p => addPageRow(p.name, p.kvName, p.codeUrl, p.kvAction, p.show));
       document.getElementById('editModal').classList.add('active');
@@ -1591,7 +1616,7 @@ function getAccountsPage() {
           '<option value="clear" ' + (kvAction==='clear'?'selected':'') + '>清空</option>' +
         '</select>' +
         '<input type="text" class="worker-url" placeholder="代码地址" value="' + escapeHtml(codeUrl) + '">' +
-        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="worker-show" ' + checked + '> 显示</label>' +
+        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="worker-show" ' + checked + ' style="width:auto;"> 显示</label>' +
         '<button class="remove-btn">删除</button>';
       
       const kvInput = div.querySelector('.worker-kv');
@@ -1612,7 +1637,7 @@ function getAccountsPage() {
           '<option value="clear" ' + (kvAction==='clear'?'selected':'') + '>清空</option>' +
         '</select>' +
         '<input type="text" class="page-url" placeholder="ZIP 地址" value="' + escapeHtml(codeUrl) + '">' +
-        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="page-show" ' + checked + '> 显示</label>' +
+        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="page-show" ' + checked + ' style="width:auto;"> 显示</label>' +
         '<button class="remove-btn">删除</button>';
       
       const kvInput = div.querySelector('.page-kv');
@@ -1631,6 +1656,8 @@ function getAccountsPage() {
       const identifier = document.getElementById('editIdentifier').value.trim();
       const accountId = document.getElementById('editAccountId').value.trim();
       const token = document.getElementById('editToken').value.trim();
+      const show = document.getElementById('editAccountShow').checked;
+      
       if (!identifier || !accountId || !token) return alert('必填项不能为空');
       
       const workers = []; document.querySelectorAll('#workerList .dynamic-item').forEach(item => {
@@ -1638,19 +1665,19 @@ function getAccountsPage() {
               kvName = item.querySelector('.worker-kv').value.trim(), 
               kvAction = item.querySelector('.worker-kv-action').value,
               codeUrl = item.querySelector('.worker-url').value.trim(),
-              show = item.querySelector('.worker-show').checked;
-        if (name) workers.push({ name, kvName, kvAction, codeUrl, show });
+              showFlag = item.querySelector('.worker-show').checked;
+        if (name) workers.push({ name, kvName, kvAction, codeUrl, show: showFlag });
       });
       const pages = []; document.querySelectorAll('#pagesList .dynamic-item').forEach(item => {
         const name = item.querySelector('.page-name').value.trim(), 
               kvName = item.querySelector('.page-kv').value.trim(), 
               kvAction = item.querySelector('.page-kv-action').value,
               codeUrl = item.querySelector('.page-url').value.trim(),
-              show = item.querySelector('.page-show').checked;
-        if (name) pages.push({ name, kvName, kvAction, codeUrl, show });
+              showFlag = item.querySelector('.page-show').checked;
+        if (name) pages.push({ name, kvName, kvAction, codeUrl, show: showFlag });
       });
       
-      const payload = { identifier, accountId, token, workers, pages };
+      const payload = { identifier, accountId, token, show, workers, pages };
       const res = await fetch('/api/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (data.success) { document.getElementById('editModal').classList.remove('active'); loadAccounts(); } 
