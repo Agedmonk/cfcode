@@ -1,4 +1,4 @@
-//2026-08-17 1658
+//2026-08-17 1704
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -817,7 +817,7 @@ function getMainPage() {
 
       <div class="info-accordion">
         <div class="info-header" id="infoHeader">
-          <span>📘 使用说明（点击展开）</span>
+          <span>📘 使用说明</span>
           <span class="arrow">▶</span>
         </div>
         <div class="info-content" id="infoContent">
@@ -913,9 +913,15 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       const headers = document.querySelectorAll('.accordion-header');
       headers.forEach(h => h.addEventListener('click', function(){
         const target = document.getElementById(this.dataset.target);
+        // 1. 先记录当前点击的面板是否处于展开状态
+        const isCurrentlyActive = target.classList.contains('active');
+        
+        // 2. 清除所有面板的展开状态和箭头方向
         document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('active'));
         document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '▶');
-        if (!target.classList.contains('active')) {
+        
+        // 3. 如果它原本没有展开，则展开它（如果原本已展开，经过第2步就已经收起了）
+        if (!isCurrentlyActive) {
           target.classList.add('active');
           this.querySelector('.arrow').textContent = '▼';
         }
