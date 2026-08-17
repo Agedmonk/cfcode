@@ -1340,7 +1340,6 @@ function getAccountsPage() {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: var(--text);
     }
-    /* 扩大整体容器宽度 */
     .container { width: 100%; max-width: 1000px; }
     .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; }
     h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; color: #222; text-align: center; }
@@ -1360,7 +1359,6 @@ function getAccountsPage() {
     }
     .account-header:hover { background: #f0f2f5; }
     
-    /* 优化头部左右两侧的布局，防止文字过长挤走按钮 */
     .account-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
     .account-header-left h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .account-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -1375,8 +1373,8 @@ function getAccountsPage() {
     .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: background 0.2s; color: #fff;}
     .btn-primary { background: var(--primary); } .btn-primary:hover { background: var(--primary-hover); }
     .btn-danger { background: #e74c3c; } .btn-danger:hover { background: #c0392b; }
-    .btn-sm { padding: 5px 10px; font-size: 12px; }
-    .btn-icon { padding: 4px 8px; font-size: 12px; background: #7f8c8d; } .btn-icon:hover { background: #95a5a6; }
+    .btn-sm { padding: 6px 10px; font-size: 13px; }
+    .btn-icon { padding: 4px 8px; font-size: 14px; font-weight: bold; background: #7f8c8d; } .btn-icon:hover { background: #95a5a6; }
     
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
     .modal.active { display: flex; }
@@ -1390,7 +1388,7 @@ function getAccountsPage() {
     .dynamic-list { margin-top: 10px; }
     .dynamic-item { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
     .dynamic-item input[type="text"] { flex: 2; min-width: 120px; }
-    .remove-btn { background: #e74c3c; color: #fff; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    .remove-btn { background: #e74c3c; color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 14px; cursor: pointer; }
     .add-btn { background: #3498db; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; margin-top: 5px; }
     .nav-links { text-align: center; margin-top: 24px; }
     .nav-links a { display: inline-block; margin: 5px; padding: 10px 20px; background: var(--primary); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }
@@ -1427,7 +1425,6 @@ function getAccountsPage() {
       <div class="form-group"><label>Account ID</label><input type="text" id="editAccountId"></div>
       <div class="form-group"><label>API Token</label><input type="password" id="editToken"></div>
       
-      <!-- 账户级显示控制开关 -->
       <div class="form-group">
         <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none; font-size:14px; color:#333;">
           <input type="checkbox" id="editAccountShow" style="width:auto;" checked>
@@ -1522,16 +1519,15 @@ function getAccountsPage() {
         const moveUpDisabled = accIdx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
         const moveDownDisabled = accIdx === accounts.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
 
-        // 移除左侧的展开箭头 <span class="arrow">▶</span>
         div.innerHTML = '<div class="account-header">' +
           '<div class="account-header-left">' +
             '<h3>' + escapeHtml(account.identifier) + accShowTag + '</h3>' +
           '</div>' +
           '<div class="account-header-right">' +
-            '<button class="btn btn-icon move-acc-up" ' + moveUpDisabled + ' data-idx="' + accIdx + '">▲</button>' +
-            '<button class="btn btn-icon move-acc-down" ' + moveDownDisabled + ' data-idx="' + accIdx + '">▼</button>' +
-            '<button class="btn btn-sm btn-primary edit-btn" data-identifier="' + escapeHtml(account.identifier) + '">编辑</button> ' +
-            '<button class="btn btn-sm btn-danger delete-btn" data-identifier="' + escapeHtml(account.identifier) + '">删除</button>' +
+            '<button class="btn btn-icon move-acc-up" ' + moveUpDisabled + ' data-idx="' + accIdx + '" title="上移">↑</button>' +
+            '<button class="btn btn-icon move-acc-down" ' + moveDownDisabled + ' data-idx="' + accIdx + '" title="下移">↓</button>' +
+            '<button class="btn btn-sm btn-primary edit-btn" data-identifier="' + escapeHtml(account.identifier) + '" title="编辑">✏️</button> ' +
+            '<button class="btn btn-sm btn-danger delete-btn" data-identifier="' + escapeHtml(account.identifier) + '" title="删除">🗑️</button>' +
           '</div></div>' +
           
           '<div class="project-list">' +
@@ -1545,8 +1541,8 @@ function getAccountsPage() {
                   return '<div class="project-detail">' +
                     '<div class="project-detail-info"><b>' + escapeHtml(w.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(w.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(w.codeUrl || '默认') + '</span></div>' +
                     '<div class="project-detail-actions">' +
-                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '">▲</button>' +
-                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '">▼</button>' +
+                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '" title="上移">↑</button>' +
+                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '" title="下移">↓</button>' +
                     '</div>' +
                   '</div>';
               }).join('') 
@@ -1562,8 +1558,8 @@ function getAccountsPage() {
                   return '<div class="project-detail">' +
                     '<div class="project-detail-info"><b>' + escapeHtml(p.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(p.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span></div>' +
                     '<div class="project-detail-actions">' +
-                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '">▲</button>' +
-                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '">▼</button>' +
+                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '" title="上移">↑</button>' +
+                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '" title="下移">↓</button>' +
                     '</div>' +
                   '</div>';
               }).join('')
@@ -1573,7 +1569,6 @@ function getAccountsPage() {
         container.appendChild(div);
       });
 
-      // 绑定展开/折叠事件（因为去掉了箭头，我们直接让点击 header 即可切换）
       document.querySelectorAll('.account-header').forEach(header => {
         header.addEventListener('click', function(e) {
           if (e.target.tagName === 'BUTTON') return;
@@ -1692,9 +1687,9 @@ function getAccountsPage() {
         '</select>' +
         '<input type="text" class="worker-url" placeholder="代码地址" value="' + escapeHtml(codeUrl) + '">' +
         '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="worker-show" ' + checked + ' style="width:auto;"> 显示</label>' +
-        '<button class="btn btn-icon row-up-btn">▲</button>' +
-        '<button class="btn btn-icon row-down-btn">▼</button>' +
-        '<button class="remove-btn">删除</button>';
+        '<button class="btn btn-icon row-up-btn" title="上移">↑</button>' +
+        '<button class="btn btn-icon row-down-btn" title="下移">↓</button>' +
+        '<button class="remove-btn" title="删除">🗑️</button>';
       
       const kvInput = div.querySelector('.worker-kv');
       const actionSelect = div.querySelector('.worker-kv-action');
@@ -1717,9 +1712,9 @@ function getAccountsPage() {
         '</select>' +
         '<input type="text" class="page-url" placeholder="ZIP 地址" value="' + escapeHtml(codeUrl) + '">' +
         '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="page-show" ' + checked + ' style="width:auto;"> 显示</label>' +
-        '<button class="btn btn-icon row-up-btn">▲</button>' +
-        '<button class="btn btn-icon row-down-btn">▼</button>' +
-        '<button class="remove-btn">删除</button>';
+        '<button class="btn btn-icon row-up-btn" title="上移">↑</button>' +
+        '<button class="btn btn-icon row-down-btn" title="下移">↓</button>' +
+        '<button class="remove-btn" title="删除">🗑️</button>';
       
       const kvInput = div.querySelector('.page-kv');
       const actionSelect = div.querySelector('.page-kv-action');
