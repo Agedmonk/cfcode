@@ -16,7 +16,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
-      - name: Download and Modify _worker.js
+      - name: 下载最新的代码用于部署worker
         run: |
           # 1. 下载原仓库的 _worker.js 文件（使用 raw.githubusercontent.com 获取原始代码）
           curl -sL "https://raw.githubusercontent.com/cmliu/edgetunnel/main/_worker.js" -o _worker.js
@@ -27,7 +27,7 @@ jobs:
           # 3. 修改“envUUID”行：匹配分号前的内容并在其后追加 UUID
           sed -i "s/^\([[:space:]]*const envUUID = .*\);/\1 || '226279dd-28b2-4b61-96be-a2a0b1afd522';/" _worker.js
 
-      - name: Compress to Zip
+      - name: 创建压缩文件用于部署pages
         run: |
           # 将修改后的 _worker.js 压缩为 worker.zip
           zip worker.zip _worker.js
