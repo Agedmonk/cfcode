@@ -1,4 +1,4 @@
-name: Sync and Modify EdgeTunnel Worker
+name: 同步EdgeTunnel代码
 
 on:
   schedule:
@@ -43,7 +43,7 @@ jobs:
           
           # 检查文件是否有变更，有变更则提交并推送到当前仓库
           if ! git diff --staged --quiet; then
-            git commit -m "Auto-sync and modify _worker.js from edgetunnel"
+            git commit -m "自动同步EdgeTunnel代码"
             git push
             echo "✅ 代码已成功拉取、修改并推送到仓库。"
           else
