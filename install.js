@@ -1,4 +1,4 @@
-//2026-08-17 1704
+//2026-08-18 0543
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -68,6 +68,9 @@ export default {
       if (request.method === "POST") return handlePostAccount(request, env);
       if (request.method === "DELETE") return handleDeleteAccount(url, env);
     }
+    if (path === "/api/accounts/reorder" && request.method === "POST") {
+      return handleReorderAccounts(request, env);
+    }
 	// === 新数据备份、恢复、导出、导入 API ===
     if (path === "/api/accounts/backup") {
       if (request.method === "GET") return handleListBackups(env);
@@ -118,6 +121,19 @@ async function saveAccountsList(env, accounts) {
 async function findAccountIndex(env, identifier) {
   const accounts = await getAccountsList(env);
   return { accounts, idx: accounts.findIndex(a => a.identifier === identifier) };
+}
+
+async function handleReorderAccounts(request, env) {
+  try {
+    const { accounts } = await request.json();
+    if (!Array.isArray(accounts)) {
+      return new Response(JSON.stringify({ success: false, error: "数据格式不正确" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    await saveAccountsList(env, accounts);
+    return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 }
 
 // ==================== Worker 部署核心 ====================
@@ -1360,19 +1376,21 @@ function getAccountsPage() {
     .account-header:hover { background: #f0f2f5; }
     .account-header-left { display: flex; align-items: center; gap: 10px; }
     .account-header-left h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--text); }
-    .account-header-right { display: flex; align-items: center; gap: 10px; }
+    .account-header-right { display: flex; align-items: center; gap: 8px; }
     
     .project-list { display: none; padding: 20px; border-top: 1px solid var(--border); background: #fafbfc; }
     .project-list.active { display: block; }
     
-    .project-detail { background: #fff; border: 1px solid #eee; padding: 10px 12px; margin: 5px 0; border-radius: 6px; font-size: 13px; color: var(--text-light); }
-    
+    .project-detail { background: #fff; border: 1px solid #eee; padding: 10px 12px; margin: 5px 0; border-radius: 6px; font-size: 13px; color: var(--text-light); display: flex; justify-content: space-between; align-items: center; }
+    .project-detail-info { flex: 1; }
+    .project-detail-actions { display: flex; gap: 5px; margin-left: 10px; }
+
     .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: background 0.2s; color: #fff;}
     .btn-primary { background: var(--primary); } .btn-primary:hover { background: var(--primary-hover); }
     .btn-danger { background: #e74c3c; } .btn-danger:hover { background: #c0392b; }
     .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-icon { padding: 4px 8px; font-size: 12px; background: #7f8c8d; } .btn-icon:hover { background: #95a5a6; }
     
-    /* 调整弹窗加宽 */
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
     .modal.active { display: flex; }
     .modal-content { background: #fff; padding: 25px; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
@@ -1383,7 +1401,7 @@ function getAccountsPage() {
     select:disabled { background: #f5f5f5; color: #a0a0a0; cursor: not-allowed; }
     
     .dynamic-list { margin-top: 10px; }
-    .dynamic-item { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .dynamic-item { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
     .dynamic-item input[type="text"] { flex: 2; min-width: 120px; }
     .remove-btn { background: #e74c3c; color: #fff; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
     .add-btn { background: #3498db; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; margin-top: 5px; }
@@ -1463,24 +1481,67 @@ function getAccountsPage() {
       const data = await res.json();
       if (data.success) { accounts = data.accounts || []; renderAccounts(); }
     }
+    
+    async function saveAccountsOrder() {
+      await fetch('/api/accounts/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accounts })
+      });
+      renderAccounts();
+    }
+
     function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
     
+    function moveAccount(index, direction) {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= accounts.length) return;
+      const temp = accounts[index];
+      accounts[index] = accounts[targetIndex];
+      accounts[targetIndex] = temp;
+      saveAccountsOrder();
+    }
+
+    function moveProject(accIndex, type, projIndex, direction) {
+      const list = accounts[accIndex][type];
+      if (!list) return;
+      const targetIndex = projIndex + direction;
+      if (targetIndex < 0 || targetIndex >= list.length) return;
+      const temp = list[projIndex];
+      list[projIndex] = list[targetIndex];
+      list[targetIndex] = temp;
+      saveAccountsOrder();
+    }
+
+    function moveModalRow(containerId, btn, direction) {
+      const item = btn.closest('.dynamic-item');
+      if (direction === -1 && item.previousElementSibling) {
+        item.parentNode.insertBefore(item, item.previousElementSibling);
+      } else if (direction === 1 && item.nextElementSibling) {
+        item.parentNode.insertBefore(item.nextElementSibling, item);
+      }
+    }
+
     function renderAccounts() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
       if (accounts.length === 0) { container.innerHTML = '<p style="text-align:center; color:#666; margin-bottom: 20px;">暂无账户配置，请添加或导入。</p>'; return; }
       
-      accounts.forEach(account => {
+      accounts.forEach((account, accIdx) => {
         const div = document.createElement('div'); div.className = 'account-item';
         
-        // 判断账户级是否隐藏，加上提示
         const accShowTag = account.show !== false ? '' : ' <span style="color:#e74c3c; font-size:14px; font-weight:normal;">[已隐藏]</span>';
+
+        const moveUpDisabled = accIdx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
+        const moveDownDisabled = accIdx === accounts.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
 
         div.innerHTML = '<div class="account-header">' +
           '<div class="account-header-left">' +
             '<span class="arrow">▶</span><h3>' + escapeHtml(account.identifier) + accShowTag + '</h3>' +
           '</div>' +
           '<div class="account-header-right">' +
+            '<button class="btn btn-icon move-acc-up" ' + moveUpDisabled + ' data-idx="' + accIdx + '">▲</button>' +
+            '<button class="btn btn-icon move-acc-down" ' + moveDownDisabled + ' data-idx="' + accIdx + '">▼</button>' +
             '<button class="btn btn-sm btn-primary edit-btn" data-identifier="' + escapeHtml(account.identifier) + '">编辑</button> ' +
             '<button class="btn btn-sm btn-danger delete-btn" data-identifier="' + escapeHtml(account.identifier) + '">删除</button>' +
           '</div></div>' +
@@ -1488,19 +1549,35 @@ function getAccountsPage() {
           '<div class="project-list">' +
             '<p style="font-weight:600; color: #333;">🚀 Workers:</p>' +
             (account.workers && account.workers.length > 0 
-              ? account.workers.map(w => {
+              ? account.workers.map((w, wIdx) => {
                   const showStr = w.show !== false ? '<span style="color:green;">[已显示]</span>' : '<span style="color:red;">[已隐藏]</span>';
                   const actionStr = w.kvName ? ' | KV操作: ' + (w.kvAction === 'clear' ? '清空' : '保留') : '';
-                  return '<div class="project-detail"><b>' + escapeHtml(w.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(w.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(w.codeUrl || '默认') + '</span></div>';
+                  const upDis = wIdx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
+                  const downDis = wIdx === account.workers.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
+                  return '<div class="project-detail">' +
+                    '<div class="project-detail-info"><b>' + escapeHtml(w.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(w.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(w.codeUrl || '默认') + '</span></div>' +
+                    '<div class="project-detail-actions">' +
+                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '">▲</button>' +
+                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="workers" data-idx="' + wIdx + '">▼</button>' +
+                    '</div>' +
+                  '</div>';
               }).join('') 
               : '<div class="project-detail" style="color:#aaa;">无配置</div>') +
             
             '<p style="font-weight:600; color: #333; margin-top:15px;">📄 Pages:</p>' +
             (account.pages && account.pages.length > 0 
-              ? account.pages.map(p => {
+              ? account.pages.map((p, pIdx) => {
                   const showStr = p.show !== false ? '<span style="color:green;">[已显示]</span>' : '<span style="color:red;">[已隐藏]</span>';
                   const actionStr = p.kvName ? ' | KV操作: ' + (p.kvAction === 'clear' ? '清空' : '保留') : '';
-                  return '<div class="project-detail"><b>' + escapeHtml(p.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(p.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span></div>';
+                  const upDis = pIdx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
+                  const downDis = pIdx === account.pages.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : '';
+                  return '<div class="project-detail">' +
+                    '<div class="project-detail-info"><b>' + escapeHtml(p.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(p.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span></div>' +
+                    '<div class="project-detail-actions">' +
+                      '<button class="btn btn-icon move-proj-up" ' + upDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '">▲</button>' +
+                      '<button class="btn btn-icon move-proj-down" ' + downDis + ' data-acc="' + accIdx + '" data-type="pages" data-idx="' + pIdx + '">▼</button>' +
+                    '</div>' +
+                  '</div>';
               }).join('')
               : '<div class="project-detail" style="color:#aaa;">无配置</div>') +
           '</div>';
@@ -1517,6 +1594,12 @@ function getAccountsPage() {
           if (arrow) arrow.textContent = list.classList.contains('active') ? '▼' : '▶';
         });
       });
+
+      document.querySelectorAll('.move-acc-up').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); moveAccount(parseInt(btn.dataset.idx), -1); }));
+      document.querySelectorAll('.move-acc-down').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); moveAccount(parseInt(btn.dataset.idx), 1); }));
+      
+      document.querySelectorAll('.move-proj-up').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); moveProject(parseInt(btn.dataset.acc), btn.dataset.type, parseInt(btn.dataset.idx), -1); }));
+      document.querySelectorAll('.move-proj-down').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); moveProject(parseInt(btn.dataset.acc), btn.dataset.type, parseInt(btn.dataset.idx), 1); }));
 
       document.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', function() { openEdit(this.dataset.identifier); }));
       document.querySelectorAll('.delete-btn').forEach(btn => btn.addEventListener('click', async function() {
@@ -1623,11 +1706,15 @@ function getAccountsPage() {
         '</select>' +
         '<input type="text" class="worker-url" placeholder="代码地址" value="' + escapeHtml(codeUrl) + '">' +
         '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="worker-show" ' + checked + ' style="width:auto;"> 显示</label>' +
+        '<button class="btn btn-icon row-up-btn">▲</button>' +
+        '<button class="btn btn-icon row-down-btn">▼</button>' +
         '<button class="remove-btn">删除</button>';
       
       const kvInput = div.querySelector('.worker-kv');
       const actionSelect = div.querySelector('.worker-kv-action');
       kvInput.addEventListener('input', () => { actionSelect.disabled = !kvInput.value.trim(); });
+      div.querySelector('.row-up-btn').addEventListener('click', function() { moveModalRow('workerList', this, -1); });
+      div.querySelector('.row-down-btn').addEventListener('click', function() { moveModalRow('workerList', this, 1); });
       div.querySelector('.remove-btn').addEventListener('click', () => div.remove());
       document.getElementById('workerList').appendChild(div);
     }
@@ -1644,11 +1731,15 @@ function getAccountsPage() {
         '</select>' +
         '<input type="text" class="page-url" placeholder="ZIP 地址" value="' + escapeHtml(codeUrl) + '">' +
         '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="page-show" ' + checked + ' style="width:auto;"> 显示</label>' +
+        '<button class="btn btn-icon row-up-btn">▲</button>' +
+        '<button class="btn btn-icon row-down-btn">▼</button>' +
         '<button class="remove-btn">删除</button>';
       
       const kvInput = div.querySelector('.page-kv');
       const actionSelect = div.querySelector('.page-kv-action');
       kvInput.addEventListener('input', () => { actionSelect.disabled = !kvInput.value.trim(); });
+      div.querySelector('.row-up-btn').addEventListener('click', function() { moveModalRow('pagesList', this, -1); });
+      div.querySelector('.row-down-btn').addEventListener('click', function() { moveModalRow('pagesList', this, 1); });
       div.querySelector('.remove-btn').addEventListener('click', () => div.remove());
       document.getElementById('pagesList').appendChild(div);
     }
