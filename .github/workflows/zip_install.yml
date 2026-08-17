@@ -20,7 +20,7 @@ jobs:
     steps:
       # 1. 检出代码库
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2. 将 install.js 打包为 install.zip
       - name: Zip install.js
