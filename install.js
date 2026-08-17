@@ -121,7 +121,7 @@ async function findAccountIndex(env, identifier) {
 }
 
 // ==================== Worker 部署核心 ====================
-async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl) {
+async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep') {
   const logs = [];
   const log = (msg) => logs.push(msg);
   try {
@@ -145,18 +145,31 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
       if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
       const existing = kvList.result.find(i => i.title === kvName);
+      
+      let kvId;
       if (existing) {
-        const del = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000)).json();
-        if (!del.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(del.errors)}`);
+        if (kvAction === 'keep') {
+          log(`[提示] 找到已存在同名 KV，执行保留策略...`);
+          kvId = existing.id;
+        } else {
+          log(`[提示] 找到已存在同名 KV，执行清空策略 (先删后建)...`);
+          const del = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000)).json();
+          if (!del.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(del.errors)}`);
+          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+          if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+          kvId = create.result.id;
+        }
+      } else {
+        log(`[提示] 未找到同名 KV，新建...`);
+        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+        if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+        kvId = create.result.id;
       }
-      const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
-      if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
-      bindings = [{ type: "kv_namespace", name: "KV", namespace_id: create.result.id }];
-      log(`[成功] KV 创建完成`);
+      bindings = [{ type: "kv_namespace", name: "KV", namespace_id: kvId }];
+      log(`[成功] KV 绑定配置完成 (ID: ${kvId})`);
     } else {
       log(`[2/5] 保留原有绑定...`);
       try {
-        // 修复：请求专用的 bindings 接口，确保必定返回 JSON 格式的绑定数组
         const get = await fetchWithTimeout(
           `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, 
           { headers }, 
@@ -165,7 +178,6 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
         
         if (get.ok) {
           const data = await get.json();
-          // bindings 接口直接将绑定数组放在 data.result 中
           if (data.success && Array.isArray(data.result)) {
             bindings = data.result;
             log(`[成功] 获取并保留原有绑定 (${bindings.length}个)`);
@@ -173,7 +185,6 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
             log(`[提示] 原项目没有绑定配置`);
           }
         } else if (get.status === 404) {
-          // 404 意味着这是全新项目，原本就不存在
           log(`[提示] 属于全新项目，无需保留旧绑定`);
         } else {
           log(`[警告] 获取旧绑定 API 异常: HTTP ${get.status}`);
@@ -226,7 +237,6 @@ async function extractZip(buf) {
     const commentLen = view.getUint16(offset + 32, true);
     const localOff = view.getUint32(offset + 42, true);
 
-    // 检查 ZIP64（暂不支持）
     if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF) {
       throw new Error("暂不支持 ZIP64 格式");
     }
@@ -245,23 +255,18 @@ async function extractZip(buf) {
 
     let data;
     if (method === 0) {
-      // 无压缩
       data = compData.slice();
     } else if (method === 8) {
-      // Deflate 压缩
       try {
-        // ZIP 使用 raw deflate
         const ds = new DecompressionStream("deflate-raw");
         const stream = new Blob([compData]).stream().pipeThrough(ds);
         data = new Uint8Array(await new Response(stream).arrayBuffer());
       } catch (rawError) {
-        // 回退 1：尝试 zlib（带 2 字节头 + 4 字节 Adler-32）
         try {
           const ds2 = new DecompressionStream("deflate");
           const stream2 = new Blob([compData]).stream().pipeThrough(ds2);
           data = new Uint8Array(await new Response(stream2).arrayBuffer());
         } catch (zlibError) {
-          // 回退 2：剥离 zlib 头尾后再 raw deflate
           if (compData.length > 6) {
             const stripped = compData.slice(2, compData.length - 4);
             try {
@@ -283,7 +288,6 @@ async function extractZip(buf) {
     files.push({ path: name.replace(/^\/+/, ""), data });
     offset += 46 + nameLen + extraLen + commentLen;
   }
-
   return files;
 }
 
@@ -293,11 +297,10 @@ async function sha256Hex(uint8array) {
 }
 
 // ==================== Pages 部署核心 ====================
-async function updatePagesKVBinding(accountId, apiToken, projectName, kvName, logs, log) {
+async function updatePagesKVBinding(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep') {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
   log(`处理 KV 绑定 [${kvName}]...`);
 
-  // 1. 查询现有 KV 命名空间
   async function findKvNamespace() {
     const res = await fetchWithTimeout(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
@@ -312,34 +315,49 @@ async function updatePagesKVBinding(accountId, apiToken, projectName, kvName, lo
   let kvId = null;
   let existing = await findKvNamespace();
 
-  // 👉 新逻辑：如果存在同名 KV，先删除它以清空数据
   if (existing) {
-    log(`找到已存在同名 KV，正在删除旧数据...`);
-    const delRes = await fetchWithTimeout(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
-      { method: "DELETE", headers },
-      15000
+    if (kvAction === 'keep') {
+      log(`找到已存在同名 KV，执行保留策略...`);
+      kvId = existing.id;
+    } else {
+      log(`找到已存在同名 KV，正在删除旧数据以清空...`);
+      const delRes = await fetchWithTimeout(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
+        { method: "DELETE", headers },
+        15000
+      );
+      const delData = await delRes.json();
+      if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
+      log(`旧 KV 删除成功，尝试创建全新 KV...`);
+      
+      const createRes = await fetchWithTimeout(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
+        { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
+        30000
+      );
+      const createData = await createRes.json();
+      if (!createData.success) {
+        throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
+      }
+      kvId = createData.result.id;
+      log(`新 KV 创建完成，ID: ${kvId}`);
+    }
+  } else {
+    log(`尝试创建全新 KV...`);
+    const createRes = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
+      { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
+      30000
     );
-    const delData = await delRes.json();
-    if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
-    log(`旧 KV 删除成功。`);
+    const createData = await createRes.json();
+    if (!createData.success) {
+      throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
+    }
+    kvId = createData.result.id;
+    log(`新 KV 创建完成，ID: ${kvId}`);
   }
 
-  // 👉 重新创建同名空 KV
-  log(`尝试创建全新 KV...`);
-  const createRes = await fetchWithTimeout(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-    { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-    30000
-  );
-  const createData = await createRes.json();
-  if (!createData.success) {
-    throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-  }
-  kvId = createData.result.id;
-  log(`新 KV 创建完成，ID: ${kvId}`);
-
-  // 2. 获取 Pages 项目当前配置
+  // 获取 Pages 项目当前配置并更新
   const projRes = await fetchWithTimeout(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
     { headers },
@@ -356,7 +374,6 @@ async function updatePagesKVBinding(accountId, apiToken, projectName, kvName, lo
   const existingKvNamespaces = prodConfig.kv_namespaces || {};
   const existingPrevKvNamespaces = prevConfig.kv_namespaces || {};
 
-  // 3. 更新 kv 绑定 (同时更新生产和预览环境)
   const updatedKvNamespaces = { ...existingKvNamespaces, KV: { namespace_id: kvId } };
   const updatedPrevKvNamespaces = { ...existingPrevKvNamespaces, KV: { namespace_id: kvId } };
   
@@ -383,7 +400,7 @@ async function updatePagesKVBinding(accountId, apiToken, projectName, kvName, lo
   log(`[成功] KV 绑定已更新至项目中`);
 }
 
-async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl) {
+async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep') {
   const logs = [];
   const log = (msg) => logs.push(msg);
   try {
@@ -422,18 +439,16 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl)
 
     if (kvName && kvName.trim()) {
       log(`[4/6] 更新 KV 绑定...`);
-      await updatePagesKVBinding(accountId, apiToken, projectName, kvName.trim(), logs, log);
+      await updatePagesKVBinding(accountId, apiToken, projectName, kvName.trim(), logs, log, kvAction);
     } else {
       log(`[4/6] 跳过 KV 绑定`);
     }
 
-log(`[5/6] 构建 manifest 并组装部署表单...`);
-    // 1. 计算每个文件的哈希
+    log(`[5/6] 构建 manifest 并组装部署表单...`);
     const manifest = {};
     let workerFile = null;
 
     for (const file of files) {
-      // 👉 核心修复：拦截 _worker.js，绝不让它进入静态资产的 manifest 中
       if (file.path === "_worker.js") {
         workerFile = file;
         continue;
@@ -445,33 +460,28 @@ log(`[5/6] 构建 manifest 并组装部署表单...`);
 
     log(`[6/6] 提交部署请求并上传文件...`);
     const form = new FormData();
-    
-    // 2. 将核心配置放入表单
     form.append("manifest", JSON.stringify(manifest));
-    form.append("branch", "main"); // 显式指定部署到主分支(生产环境，确保 KV 生效)
+    form.append("branch", "main"); 
 
-    // 3. 将普通的静态文件打包进 FormData
     for (const file of files) {
       if (file.path === "_worker.js") continue;
       const filePath = "/" + file.path;
       form.append(filePath, new Blob([file.data]), file.path.split("/").pop() || "file");
     }
 
-    // 👉 核心修复：将 _worker.js 作为单独的专属顶级字段独立提交
     if (workerFile) {
       form.append("_worker.js", new Blob([workerFile.data], { type: "application/javascript+module" }), "_worker.js");
       log("已独立注入 _worker.js 后台引擎");
     }
 
-    // 4. 一次性将配置和文件发送给 Cloudflare API 完成部署
     const deployRes = await fetchWithTimeout(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}/deployments`,
       {
         method: "POST",
-        headers: { "Authorization": `Bearer ${apiToken}` }, // 绝不带 Content-Type，让 fetch 自动生成 multipart 边界
+        headers: { "Authorization": `Bearer ${apiToken}` }, 
         body: form
       },
-      60000 // 视压缩包大小，给上传预留足够的时间
+      60000 
     );
 
     const deployData = await deployRes.json();
@@ -490,12 +500,12 @@ log(`[5/6] 构建 manifest 并组装部署表单...`);
 }
 
 // ==================== 统一部署分发 ====================
-async function deployByType(type, id, token, kv, name, source) {
+async function deployByType(type, id, token, kv, name, source, kvAction = 'keep') {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
   if (!t || !id || !token || !name) return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少参数"], status: 400 };
-  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src);
-  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src);
+  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction);
+  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction);
   return { success: false, error: "type 无效", logs: ["ERR: type 无效"], status: 400 };
 }
 
@@ -504,15 +514,15 @@ async function handleUnifiedDeploy(request) {
   let p = {};
   if (ct.includes("application/json")) {
     const b = await request.json().catch(() => ({}));
-    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url };
+    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url };
   } else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url") };
+    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url") };
   } else {
     const b = await request.json().catch(() => ({}));
-    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url };
+    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url };
   }
-  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source);
+  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
 }
 
@@ -522,21 +532,22 @@ async function handleGetDeploy(url) {
   const id = q.get("accountid") || q.get("id") || "";
   const token = q.get("token") || "";
   const kv = q.get("kvname") || q.get("kv") || "";
+  const kvAction = q.get("kvAction") || q.get("kvaction") || 'keep';
   const name = q.get("projectname") || q.get("name") || "";
   const source = q.get("codeurl") || q.get("source") || q.get("zipurl") || q.get("url") || "default";
-  const result = await deployByType(type, id, token, kv, name, source);
+  const result = await deployByType(type, id, token, kv, name, source, kvAction);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
 }
 
 async function handleDeployWorker(request) {
   const b = await request.json().catch(() => ({}));
-  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, b.codeUrl);
+  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, b.codeUrl, b.kvAction || 'keep');
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json; charset=utf-8" } });
 }
 
 async function handleDeployPages(request) {
   const b = await request.json().catch(() => ({}));
-  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, b.zipUrl);
+  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, b.zipUrl, b.kvAction || 'keep');
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json; charset=utf-8" } });
 }
 
@@ -578,13 +589,10 @@ async function handleCreateBackup(env) {
   try {
     const raw = await env.KV.get(ACCOUNTS_KEY);
     if (!raw) return new Response(JSON.stringify({ success: false, error: "无数据可备份" }), { headers: { "Content-Type": "application/json" } });
-    
-    // 生成东八区时间作为名称 (例如 backup_20240315_143000)
     const d = new Date();
     d.setTime(d.getTime() + 8 * 60 * 60 * 1000); 
     const pad = n => n.toString().padStart(2, '0');
     const key = `backup_${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}_${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
-    
     await env.KV.put(key, raw);
     return new Response(JSON.stringify({ success: true, key }), { headers: { "Content-Type": "application/json" } });
   } catch (e) {
@@ -618,12 +626,11 @@ async function handleRestoreBackup(request, env) {
 async function handleExportAll(env) {
   try {
     const allData = {};
-    const listed = await env.KV.list(); // 取出 KV 里的所有数据（账号 + 备份）
+    const listed = await env.KV.list(); 
     for (const k of listed.keys) {
       const val = await env.KV.get(k.name);
       if (val) allData[k.name] = val;
     }
-    // 返回带附件头的 JSON 文件
     return new Response(JSON.stringify(allData, null, 2), {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -639,7 +646,6 @@ async function handleImportAll(request, env) {
   try {
     const data = await request.json();
     for (const [k, v] of Object.entries(data)) {
-      // 如果原内容是 JSON 字符串，直接写回，否则 stringify 后写回
       await env.KV.put(k, typeof v === 'string' ? v : JSON.stringify(v));
     }
     return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
@@ -697,213 +703,53 @@ function getMainPage() {
   <title>Cloudflare 部署工具</title>
   <style>
     :root {
-      --primary: #f38020;
-      --primary-hover: #e06c11;
-      --bg: #f0f2f5;
-      --card-bg: #ffffff;
-      --text: #333333;
-      --text-light: #666666;
-      --border: #e0e0e0;
-      --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      --primary: #f38020; --primary-hover: #e06c11;
+      --bg: #f0f2f5; --card-bg: #ffffff;
+      --text: #333333; --text-light: #666666;
+      --border: #e0e0e0; --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
       --radius: 12px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      color: var(--text);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: var(--text);
     }
-    .container {
-      width: 100%;
-      max-width: 720px;
+    .container { width: 100%; max-width: 720px; }
+    .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; }
+    h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; color: #222; text-align: center; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text-light); }
+    input, select {
+      width: 100%; padding: 12px 15px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s; background: #fafafa;
     }
-    .card {
-      background: var(--card-bg);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 30px;
-    }
-    h2 {
-      font-size: 24px;
-      font-weight: 700;
-      margin-bottom: 24px;
-      color: #222;
-      text-align: center;
-    }
-    .form-group {
-      margin-bottom: 18px;
-    }
-    label {
-      display: block;
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 6px;
-      color: var(--text-light);
-    }
-    input {
-      width: 100%;
-      padding: 12px 15px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      background: #fafafa;
-    }
-    input:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(243, 128, 32, 0.15);
-      background: #fff;
-    }
-    .accordion {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-      margin-bottom: 12px;
-      background: #fff;
-    }
-    .accordion-header {
-      background: #f7f8fa;
-      padding: 16px 20px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      user-select: none;
-      transition: background 0.2s;
-    }
-    .accordion-header:hover {
-      background: #f0f2f5;
-    }
-    .accordion-header .arrow {
-      transition: transform 0.2s;
-    }
-    .accordion-content {
-      display: none;
-      padding: 20px;
-      border-top: 1px solid var(--border);
-    }
-    .accordion-content.active {
-      display: block;
-    }
-    button {
-      width: 100%;
-      padding: 14px;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 16px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-      margin-top: 10px;
-    }
-    button:hover {
-      background: var(--primary-hover);
-    }
-    button:active {
-      transform: scale(0.98);
-    }
-    button:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-    .output-box {
-      margin-top: 24px;
-    }
-    textarea {
-      width: 100%;
-      height: 400px;
-      background: #1e1e2e;
-      color: #4af626;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      padding: 15px;
-      border-radius: 8px;
-      border: none;
-      resize: vertical;
-      outline: none;
-    }
-    .info-accordion {
-      margin-top: 24px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-      background: #fff;
-    }
-    .info-header {
-      background: #f7f8fa;
-      padding: 16px 20px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      user-select: none;
-    }
-    .info-header:hover {
-      background: #f0f2f5;
-    }
-    .info-content {
-      display: none;
-      padding: 20px;
-      border-top: 1px solid var(--border);
-      background: #fafbfc;
-    }
-    .info-content.active {
-      display: block;
-    }
-    .info-section {
-      margin-bottom: 28px;
-    }
-    .info-section h3 {
-      font-size: 17px;
-      font-weight: 600;
-      margin-bottom: 10px;
-      color: #333;
-    }
-    .info-section p {
-      font-size: 14px;
-      color: #555;
-      margin-bottom: 10px;
-      line-height: 1.6;
-    }
-    pre {
-      background: #2d2d3f;
-      color: #f8f8f2;
-      padding: 15px;
-      border-radius: 8px;
-      overflow-x: auto;
-      font-size: 13px;
-      line-height: 1.5;
-      margin-bottom: 10px;
-    }
-    code {
-      font-family: 'SF Mono', 'Fira Code', monospace;
-    }
-    .link-button {
-      display: inline-block;
-      padding: 12px 24px;
-      background: var(--primary);
-      color: #fff;
-      border-radius: 8px;
-      text-decoration: none;
-      font-weight: 600;
-      margin-top: 10px;
-      transition: background 0.2s;
-    }
-    .link-button:hover {
-      background: var(--primary-hover);
-    }
+    input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243, 128, 32, 0.15); background: #fff; }
+    select:disabled { background: #eeeeee; color: #999; cursor: not-allowed; }
+    .accordion { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; background: #fff; }
+    .accordion-header { background: #f7f8fa; padding: 16px 20px; cursor: pointer; font-weight: 600; font-size: 16px; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; }
+    .accordion-header:hover { background: #f0f2f5; }
+    .accordion-header .arrow { transition: transform 0.2s; }
+    .accordion-content { display: none; padding: 20px; border-top: 1px solid var(--border); }
+    .accordion-content.active { display: block; }
+    button { width: 100%; padding: 14px; background: var(--primary); color: #fff; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s, transform 0.1s; margin-top: 10px; }
+    button:hover { background: var(--primary-hover); }
+    button:active { transform: scale(0.98); }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .output-box { margin-top: 24px; }
+    textarea { width: 100%; height: 400px; background: #1e1e2e; color: #4af626; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; padding: 15px; border-radius: 8px; border: none; resize: vertical; outline: none; }
+    .info-accordion { margin-top: 24px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
+    .info-header { background: #f7f8fa; padding: 16px 20px; cursor: pointer; font-weight: 600; font-size: 16px; display: flex; justify-content: space-between; align-items: center; user-select: none; }
+    .info-header:hover { background: #f0f2f5; }
+    .info-content { display: none; padding: 20px; border-top: 1px solid var(--border); background: #fafbfc; }
+    .info-content.active { display: block; }
+    .info-section { margin-bottom: 28px; }
+    .info-section h3 { font-size: 17px; font-weight: 600; margin-bottom: 10px; color: #333; }
+    .info-section p { font-size: 14px; color: #555; margin-bottom: 10px; line-height: 1.6; }
+    pre { background: #2d2d3f; color: #f8f8f2; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
+    code { font-family: 'SF Mono', 'Fira Code', monospace; }
+    .link-button { display: inline-block; padding: 12px 24px; background: var(--primary); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 10px; transition: background 0.2s; }
+    .link-button:hover { background: var(--primary-hover); }
   </style>
 </head>
 <body>
@@ -919,9 +765,17 @@ function getMainPage() {
         <label>API Token</label>
         <input type="password" id="apiToken" placeholder="例如：cfcut_...">
       </div>
-      <div class="form-group">
-        <label>KV 名称（可选，留空保留原绑定）</label>
-        <input type="text" id="kvName" placeholder="例如：MY_KV_STORE">
+      <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
+        <div style="flex: 1;">
+          <label>KV 名称（可选，留空保留原绑定）</label>
+          <input type="text" id="kvName" placeholder="例如：MY_KV_STORE">
+        </div>
+        <div style="width: 100px;">
+          <select id="kvAction" disabled>
+            <option value="keep">保留</option>
+            <option value="clear">清空</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
         <label>项目名称（Worker 或 Pages 名称）</label>
@@ -1000,6 +854,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     id: "YOUR_ACCOUNT_ID",
     token: "YOUR_API_TOKEN",
     kv: "MY_KV_STORE",
+    kvAction: "keep",
     name: "my-worker-app",
     source: "default"
   })
@@ -1013,6 +868,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     "id": "YOUR_ACCOUNT_ID",
     "token": "YOUR_API_TOKEN",
     "kv": "MY_KV_STORE",
+    "kvAction": "keep",
     "source": "default",
     "name": "my-worker-app"
   }'</code></pre>
@@ -1020,7 +876,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
             <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
   -H "Authorization: Bearer 您的系统访问密码" \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
-  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&projectname=my-worker-app&codeurl=default"</code></pre>
+  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
             <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
           <div class="info-section">
@@ -1043,6 +899,17 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
 
   <script>
     (function(){
+      // 联动控制 KV Action 下拉框
+      const kvInput = document.getElementById('kvName');
+      const kvAction = document.getElementById('kvAction');
+      kvInput.addEventListener('input', () => {
+        if (kvInput.value.trim() !== '') {
+          kvAction.disabled = false;
+        } else {
+          kvAction.disabled = true;
+        }
+      });
+
       const headers = document.querySelectorAll('.accordion-header');
       headers.forEach(h => h.addEventListener('click', function(){
         const target = document.getElementById(this.dataset.target);
@@ -1054,17 +921,21 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         }
       }));
 
+      // 使用说明面板的折叠逻辑
       const ih = document.getElementById('infoHeader');
-      ih.addEventListener('click', () => {
-        const ic = document.getElementById('infoContent');
-        ic.classList.toggle('active');
-        ih.querySelector('.arrow').textContent = ic.classList.contains('active') ? '▼' : '▶';
-      });
+      if (ih) {
+        ih.addEventListener('click', () => {
+          const ic = document.getElementById('infoContent');
+          ic.classList.toggle('active');
+          ih.querySelector('.arrow').textContent = ic.classList.contains('active') ? '▼' : '▶';
+        });
+      }
 
       document.getElementById('btnDeployWorker').addEventListener('click', async function(){
         const accountId = document.getElementById('accountId').value.trim();
         const apiToken = document.getElementById('apiToken').value.trim();
         const kvName = document.getElementById('kvName').value.trim();
+        const kvActionVal = document.getElementById('kvAction').value;
         const workerName = document.getElementById('projectName').value.trim();
         const codeUrl = document.getElementById('workerCodeUrl').value.trim();
         if (!accountId || !apiToken || !workerName) return alert('请填写必填项');
@@ -1074,7 +945,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const res = await fetch('/api/deploy-worker', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({accountId, apiToken, kvName, workerName, codeUrl})
+          body: JSON.stringify({accountId, apiToken, kvName, kvAction: kvActionVal, workerName, codeUrl})
         });
         const data = await res.json();
         output.value = (data.logs || []).join('\\n');
@@ -1085,6 +956,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const accountId = document.getElementById('accountId').value.trim();
         const apiToken = document.getElementById('apiToken').value.trim();
         const kvName = document.getElementById('kvName').value.trim();
+        const kvActionVal = document.getElementById('kvAction').value;
         const projectName = document.getElementById('projectName').value.trim();
         const zipUrl = document.getElementById('pagesZipUrl').value.trim();
         if (!accountId || !apiToken || !projectName) return alert('请填写必填项');
@@ -1094,7 +966,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const res = await fetch('/api/deploy-pages', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({accountId, apiToken, kvName, projectName, zipUrl})
+          body: JSON.stringify({accountId, apiToken, kvName, kvAction: kvActionVal, projectName, zipUrl})
         });
         const data = await res.json();
         output.value = (data.logs || []).join('\\n');
@@ -1128,7 +1000,7 @@ function getDashboardPage() {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: var(--text);
     }
-    .container { width: 100%; max-width: 900px; } /* 稍微加宽以适应双栏 */
+    .container { width: 100%; max-width: 950px; }
     .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; }
     h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; color: #222; text-align: center; }
     
@@ -1150,18 +1022,17 @@ function getDashboardPage() {
     }
     .project-list.active { display: block; }
 
-    /* ====== 新增：左右双栏布局 ====== */
     .project-columns { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; }
-    .project-column { flex: 1; min-width: 300px; background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .project-column { flex: 1; min-width: 320px; background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .column-header { background: #f7f8fa; padding: 12px 15px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; border-bottom: 1px solid var(--border); transition: background 0.2s; }
     .column-header:hover { background: #f0f2f5; }
     .column-header input[type="checkbox"] { cursor: pointer; transform: scale(1.1); }
     .column-content { padding: 5px 15px 15px 15px; }
 
-    /* ====== 新增：临时部署块 ====== */
     .temp-deploy-block { background: #fdfdfd; border: 1px dashed #ccc; border-radius: 8px; padding: 12px 15px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .temp-deploy-block input[type="text"], .temp-deploy-block select { flex: 1; min-width: 110px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
+    .temp-deploy-block input[type="text"], .temp-deploy-block select { flex: 1; min-width: 90px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
     .temp-deploy-block input[type="text"]:focus, .temp-deploy-block select:focus { border-color: var(--primary); }
+    .temp-deploy-block select:disabled { background: #eeeeee; color: #999; cursor: not-allowed; }
     .temp-cb-wrap { display: flex; align-items: center; gap: 5px; font-weight: bold; cursor: pointer; white-space: nowrap; margin-right: 5px; user-select: none; }
     .temp-cb-wrap input[type="checkbox"] { cursor: pointer; transform: scale(1.1); }
     
@@ -1233,10 +1104,13 @@ function getDashboardPage() {
       }
       
       allAccounts.forEach((account, accIndex) => {
+        // 过滤出设置为“显示”的项目
+        const activeWorkers = account.workers ? account.workers.filter(w => w.show !== false) : [];
+        const activePages = account.pages ? account.pages.filter(p => p.show !== false) : [];
+
         const accDiv = document.createElement('div');
         accDiv.className = 'account-item';
         
-        // 渲染重构后的双栏及临时部署结构
         accDiv.innerHTML = 
           '<div class="account-header" data-acc-index="' + accIndex + '">' +
             '<div class="account-header-left">' +
@@ -1251,32 +1125,44 @@ function getDashboardPage() {
                 '<div class="column-header" data-acc-index="' + accIndex + '" data-group="worker">' +
                   '<input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="worker"> 🚀 Workers' +
                 '</div>' +
-                '<div class="column-content">' + renderProjects(account.workers, 'worker', accIndex) + '</div>' +
+                '<div class="column-content">' + renderProjects(activeWorkers, 'worker', accIndex) + '</div>' +
               '</div>' +
               '<div class="project-column">' +
                 '<div class="column-header" data-acc-index="' + accIndex + '" data-group="page">' +
                   '<input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="page"> 📄 Pages' +
                 '</div>' +
-                '<div class="column-content">' + renderProjects(account.pages, 'page', accIndex) + '</div>' +
+                '<div class="column-content">' + renderProjects(activePages, 'page', accIndex) + '</div>' +
               '</div>' +
             '</div>' +
             '<div class="temp-deploy-block">' +
               '<label class="temp-cb-wrap">' +
                 '<input type="checkbox" class="temp-checkbox" data-acc-index="' + accIndex + '"> 临时部署' +
               '</label>' +
-              '<select class="temp-type" data-acc-index="' + accIndex + '">' +
+              '<select class="temp-type" data-acc-index="' + accIndex + '" style="max-width:85px;">' +
                 '<option value="worker">Worker</option>' +
                 '<option value="page">Pages</option>' +
               '</select>' +
               '<input type="text" class="temp-name" data-acc-index="' + accIndex + '" placeholder="项目名">' +
               '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV名(选填)">' +
+              '<select class="temp-kv-action" data-acc-index="' + accIndex + '" disabled style="max-width:75px;">' +
+                '<option value="keep">保留</option>' +
+                '<option value="clear">清空</option>' +
+              '</select>' +
               '<input type="text" class="temp-source" data-acc-index="' + accIndex + '" placeholder="源地址(选填)">' +
             '</div>' +
           '</div>';
         container.appendChild(accDiv);
       });
 
-      // 👉 1. 账户标题点击折叠/展开功能
+      // 绑定临时部署模块的 KV 输入事件以联动下拉框
+      document.querySelectorAll('.temp-kv').forEach(input => {
+        input.addEventListener('input', function() {
+          const idx = this.dataset.accIndex;
+          const sel = document.querySelector('.temp-kv-action[data-acc-index="' + idx + '"]');
+          if (sel) sel.disabled = !this.value.trim();
+        });
+      });
+
       document.querySelectorAll('.account-header').forEach(header => {
         header.addEventListener('click', function(e) {
           if (e.target.tagName === 'INPUT') return; 
@@ -1287,7 +1173,6 @@ function getDashboardPage() {
         });
       });
 
-      // 👉 2. 勾选账户级别的复选框：全选/取消全选常规项目 (排除 temp-checkbox)
       document.querySelectorAll('.account-checkbox').forEach(cb => {
         cb.addEventListener('change', function() {
           const idx = this.dataset.accIndex;
@@ -1296,22 +1181,17 @@ function getDashboardPage() {
         });
       });
 
-      // 👉 3. 左右分栏标题点击全选：只控制自己块内部的常规项目
       document.querySelectorAll('.column-header').forEach(header => {
         header.addEventListener('click', function(e) {
           const cb = this.querySelector('.group-checkbox');
-          if (e.target.tagName !== 'INPUT') {
-            cb.checked = !cb.checked;
-          }
+          if (e.target.tagName !== 'INPUT') { cb.checked = !cb.checked; }
           const idx = this.dataset.accIndex;
           const group = this.dataset.group;
-          
           document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + group + '"]').forEach(pcb => pcb.checked = cb.checked);
           checkAccountSync(idx);
         });
       });
 
-      // 👉 4. 常规子项目反向联动：取消子项时，同步取消块全选及账户全选
       document.querySelectorAll('.normal-checkbox').forEach(cb => {
         cb.addEventListener('change', function() {
           const idx = this.dataset.accIndex;
@@ -1321,7 +1201,6 @@ function getDashboardPage() {
         });
       });
 
-      // 单个项目的详情折叠
       document.querySelectorAll('.project-title').forEach(title => {
         title.addEventListener('click', function(e) {
           if (e.target.tagName === 'INPUT') return;
@@ -1329,7 +1208,6 @@ function getDashboardPage() {
         });
       });
       
-      // 辅助函数：同步分栏组的全选状态
       function checkGroupSync(idx, type) {
         const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]');
         const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]:checked');
@@ -1337,7 +1215,6 @@ function getDashboardPage() {
         if(gcb) gcb.checked = (all.length > 0 && all.length === checked.length);
       }
 
-      // 辅助函数：同步账户总控的全选状态
       function checkAccountSync(idx) {
         const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]');
         const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]:checked');
@@ -1350,41 +1227,39 @@ function getDashboardPage() {
       if (!projects || projects.length === 0) return '<div style="padding: 15px 0; color: #999; text-align: center; font-size: 13px;">无配置项</div>';
       return projects.map(proj => {
         const icon = type === 'worker' ? '🚀' : '📄';
-        // 使用 normal-checkbox 标记常规配置，以区分临时部署
+        // 渲染时展示相应的KV操作策略
+        const kvDisp = proj.kvName ? proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')' : '(留空/保留原绑定)';
         return '<div class="project-item">' +
           '<div class="project-title">' +
           '<input type="checkbox" class="project-checkbox normal-checkbox" data-acc-index="' + accIndex + '" data-type="' + type + '" data-name="' + escapeHtml(proj.name) + '">' +
           '<span class="name">' + icon + ' ' + escapeHtml(proj.name) + '</span></div>' +
           '<div class="project-details">' +
-          '<div class="detail-row"><span>KV 名称：</span>' + escapeHtml(proj.kvName || '(留空/保留原绑定)') + '</div>' +
+          '<div class="detail-row"><span>KV 名称：</span>' + escapeHtml(kvDisp) + '</div>' +
           '<div class="detail-row"><span>代码源：</span>' + escapeHtml(proj.codeUrl || '(默认)') + '</div>' +
           '</div></div>';
       }).join('');
     }
 
-    // 部署逻辑（包含处理临时部署的新逻辑）
     document.getElementById('btnDeploySelected').addEventListener('click', async function() {
       const btn = this;
       const output = document.getElementById('logOutput');
       const selected = [];
       
-      // 同时抓取被选中的 常规项目 和 临时部署项目
       document.querySelectorAll('.normal-checkbox:checked, .temp-checkbox:checked').forEach(cb => {
         const accIndex = parseInt(cb.dataset.accIndex);
         const account = allAccounts[accIndex];
         
-        // 区分临时部署块的数据读取
         if (cb.classList.contains('temp-checkbox')) {
           const type = document.querySelector('.temp-type[data-acc-index="' + accIndex + '"]').value;
           const name = document.querySelector('.temp-name[data-acc-index="' + accIndex + '"]').value.trim();
           const kvName = document.querySelector('.temp-kv[data-acc-index="' + accIndex + '"]').value.trim();
+          const kvAction = document.querySelector('.temp-kv-action[data-acc-index="' + accIndex + '"]').value;
           const codeUrl = document.querySelector('.temp-source[data-acc-index="' + accIndex + '"]').value.trim();
           
-          if (name) { // 如果勾选了临时部署但没填项目名，则忽略
-             selected.push({ type, account, proj: { name, kvName, codeUrl: codeUrl || 'default' } });
+          if (name) { 
+             selected.push({ type, account, proj: { name, kvName, kvAction, codeUrl: codeUrl || 'default' } });
           }
         } else {
-          // 常规项目逻辑
           const type = cb.dataset.type;
           const name = cb.dataset.name;
           const proj = type === 'worker' ? account.workers.find(w => w.name === name) : account.pages.find(p => p.name === name);
@@ -1406,7 +1281,7 @@ function getDashboardPage() {
         output.value += '项目: ' + item.proj.name + '\\n';
         output.scrollTop = output.scrollHeight;
 
-        const payload = { type: item.type, id: item.account.accountId, token: item.account.token, kv: item.proj.kvName || '', name: item.proj.name, source: item.proj.codeUrl || 'default' };
+        const payload = { type: item.type, id: item.account.accountId, token: item.account.token, kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', name: item.proj.name, source: item.proj.codeUrl || 'default' };
         
         try {
           const res = await fetch('/api/deploy', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
@@ -1455,7 +1330,6 @@ function getAccountsPage() {
     .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; }
     h2 { font-size: 24px; font-weight: 700; margin-bottom: 24px; color: #222; text-align: center; }
     
-    /* 备份栏按钮样式 */
     .action-bar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
     .action-bar .btn { flex: 1; min-width: 120px; padding: 12px; font-size: 14px; display: flex; justify-content: center; align-items: center; gap: 5px;}
     .bg-green { background: #27ae60 !important; } .bg-green:hover { background: #2ecc71 !important; }
@@ -1463,7 +1337,6 @@ function getAccountsPage() {
     .bg-purple { background: #8e44ad !important; } .bg-purple:hover { background: #9b59b6 !important; }
     .bg-blue { background: #2980b9 !important; } .bg-blue:hover { background: #3498db !important; }
 
-    /* 账户条目样式更新：适配折叠 */
     .account-item { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; background: #fff; }
     .account-header { 
       background: #f7f8fa; padding: 16px 20px; cursor: pointer; 
@@ -1475,7 +1348,6 @@ function getAccountsPage() {
     .account-header-left h3 { font-size: 18px; font-weight: 700; margin: 0; color: var(--text); }
     .account-header-right { display: flex; align-items: center; gap: 10px; }
     
-    /* 默认隐藏项目列表 */
     .project-list { display: none; padding: 20px; border-top: 1px solid var(--border); background: #fafbfc; }
     .project-list.active { display: block; }
     
@@ -1486,20 +1358,21 @@ function getAccountsPage() {
     .btn-danger { background: #e74c3c; } .btn-danger:hover { background: #c0392b; }
     .btn-sm { padding: 5px 10px; font-size: 12px; }
     
-    /* 弹窗及表单样式 */
+    /* 调整弹窗加宽 */
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
     .modal.active { display: flex; }
-    .modal-content { background: #fff; padding: 25px; border-radius: 12px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
+    .modal-content { background: #fff; padding: 25px; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
     .form-group { margin-bottom: 15px; }
     label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: var(--text-light); }
     input, select { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; }
     input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243,128,32,0.15); }
+    select:disabled { background: #f5f5f5; color: #a0a0a0; cursor: not-allowed; }
     
     .dynamic-list { margin-top: 10px; }
-    .dynamic-item { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-    .dynamic-item input { flex: 1; padding: 8px 10px; }
-    .remove-btn { background: #e74c3c; color: #fff; border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-    .add-btn { background: #3498db; color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; margin-top: 5px; }
+    .dynamic-item { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .dynamic-item input[type="text"] { flex: 2; min-width: 120px; }
+    .remove-btn { background: #e74c3c; color: #fff; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    .add-btn { background: #3498db; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; margin-top: 5px; }
     .nav-links { text-align: center; margin-top: 24px; }
     .nav-links a { display: inline-block; margin: 5px; padding: 10px 20px; background: var(--primary); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }
   </style>
@@ -1509,7 +1382,6 @@ function getAccountsPage() {
     <div class="card">
       <h2>👤 账户与数据管理</h2>
       
-      <!-- 数据操作栏 -->
       <div class="action-bar">
         <button id="btnBackup" class="btn bg-green">💾 备份账户</button>
         <button id="btnShowRestore" class="btn bg-orange">⏪ 恢复备份</button>
@@ -1529,7 +1401,6 @@ function getAccountsPage() {
     </div>
   </div>
 
-  <!-- 编辑弹窗 -->
   <div id="editModal" class="modal">
     <div class="modal-content">
       <h3 id="modalTitle" style="margin-bottom:20px;">添加账户</h3>
@@ -1539,13 +1410,12 @@ function getAccountsPage() {
       <div class="form-group"><label>Workers</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">添加 Worker</button></div>
       <div class="form-group"><label>Pages</label><div id="pagesList" class="dynamic-list"></div><button id="btnAddPage" class="add-btn">添加 Pages</button></div>
       <div style="display:flex; gap:10px; margin-top:20px;">
-        <button id="btnSave" class="btn btn-primary" style="flex:1;">保存</button>
-        <button id="btnCancel" class="btn btn-danger" style="flex:1;">取消</button>
+        <button id="btnSave" class="btn btn-primary" style="flex:1; padding:12px;">保存</button>
+        <button id="btnCancel" class="btn btn-danger" style="flex:1; padding:12px;">取消</button>
       </div>
     </div>
   </div>
 
-  <!-- 恢复弹窗 -->
   <div id="restoreModal" class="modal">
     <div class="modal-content">
       <h3 style="margin-bottom:20px;">⏪ 选择备份进行恢复</h3>
@@ -1580,7 +1450,6 @@ function getAccountsPage() {
       accounts.forEach(account => {
         const div = document.createElement('div'); div.className = 'account-item';
         
-        // 构造带有箭头和按钮的头部
         div.innerHTML = '<div class="account-header">' +
           '<div class="account-header-left">' +
             '<span class="arrow">▶</span><h3>' + escapeHtml(account.identifier) + '</h3>' +
@@ -1590,28 +1459,32 @@ function getAccountsPage() {
             '<button class="btn btn-sm btn-danger delete-btn" data-identifier="' + escapeHtml(account.identifier) + '">删除</button>' +
           '</div></div>' +
           
-          // 默认隐藏的列表内容
           '<div class="project-list">' +
             '<p style="font-weight:600; color: #333;">🚀 Workers:</p>' +
             (account.workers && account.workers.length > 0 
-              ? account.workers.map(w => '<div class="project-detail"><b>' + escapeHtml(w.name) + '</b> <br><span style="color:#888;">KV: ' + escapeHtml(w.kvName || '无') + ' | 源: ' + escapeHtml(w.codeUrl || '默认') + '</span></div>').join('') 
+              ? account.workers.map(w => {
+                  const showStr = w.show !== false ? '<span style="color:green;">[已显示]</span>' : '<span style="color:red;">[已隐藏]</span>';
+                  const actionStr = w.kvName ? ' | KV操作: ' + (w.kvAction === 'clear' ? '清空' : '保留') : '';
+                  return '<div class="project-detail"><b>' + escapeHtml(w.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(w.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(w.codeUrl || '默认') + '</span></div>';
+              }).join('') 
               : '<div class="project-detail" style="color:#aaa;">无配置</div>') +
             
             '<p style="font-weight:600; color: #333; margin-top:15px;">📄 Pages:</p>' +
             (account.pages && account.pages.length > 0 
-              ? account.pages.map(p => '<div class="project-detail"><b>' + escapeHtml(p.name) + '</b> <br><span style="color:#888;">KV: ' + escapeHtml(p.kvName || '无') + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span></div>').join('')
+              ? account.pages.map(p => {
+                  const showStr = p.show !== false ? '<span style="color:green;">[已显示]</span>' : '<span style="color:red;">[已隐藏]</span>';
+                  const actionStr = p.kvName ? ' | KV操作: ' + (p.kvAction === 'clear' ? '清空' : '保留') : '';
+                  return '<div class="project-detail"><b>' + escapeHtml(p.name) + '</b> ' + showStr + '<br><span style="color:#888;">KV: ' + escapeHtml(p.kvName || '无') + actionStr + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span></div>';
+              }).join('')
               : '<div class="project-detail" style="color:#aaa;">无配置</div>') +
           '</div>';
         
         container.appendChild(div);
       });
 
-      // 👉 折叠展开事件绑定
       document.querySelectorAll('.account-header').forEach(header => {
         header.addEventListener('click', function(e) {
-          // 如果点击的是“编辑”或“删除”按钮，不触发折叠动作
           if (e.target.tagName === 'BUTTON') return;
-          
           const list = this.nextElementSibling;
           list.classList.toggle('active');
           const arrow = this.querySelector('.arrow');
@@ -1619,7 +1492,6 @@ function getAccountsPage() {
         });
       });
 
-      // 绑定编辑和删除按钮事件
       document.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', function() { openEdit(this.dataset.identifier); }));
       document.querySelectorAll('.delete-btn').forEach(btn => btn.addEventListener('click', async function() {
         if (confirm('确定删除账户 ' + this.dataset.identifier + ' 吗？')) {
@@ -1628,7 +1500,6 @@ function getAccountsPage() {
       }));
     }
 
-    // === 数据备份、恢复、导出、导入事件 ===
     document.getElementById('btnBackup').addEventListener('click', async () => {
       if(!confirm('是否将当前所有账户信息备份到 KV 数据库？')) return;
       const res = await fetch('/api/accounts/backup', { method: 'POST' });
@@ -1692,7 +1563,6 @@ function getAccountsPage() {
       reader.readAsText(file);
     });
 
-    // === 原有增删改 UI 逻辑 ===
     function openAdd() {
       editingIdentifier = null; document.getElementById('modalTitle').textContent = '添加账户';
       document.getElementById('editIdentifier').value = ''; document.getElementById('editAccountId').value = ''; document.getElementById('editToken').value = '';
@@ -1705,25 +1575,49 @@ function getAccountsPage() {
       if (!account) return;
       editingIdentifier = identifier; document.getElementById('modalTitle').textContent = '编辑账户: ' + identifier;
       document.getElementById('editIdentifier').value = account.identifier; document.getElementById('editAccountId').value = account.accountId; document.getElementById('editToken').value = account.token;
-      const wl = document.getElementById('workerList'); wl.innerHTML = ''; (account.workers || []).forEach(w => addWorkerRow(w.name, w.kvName, w.codeUrl));
-      const pl = document.getElementById('pagesList'); pl.innerHTML = ''; (account.pages || []).forEach(p => addPageRow(p.name, p.kvName, p.codeUrl));
+      const wl = document.getElementById('workerList'); wl.innerHTML = ''; (account.workers || []).forEach(w => addWorkerRow(w.name, w.kvName, w.codeUrl, w.kvAction, w.show));
+      const pl = document.getElementById('pagesList'); pl.innerHTML = ''; (account.pages || []).forEach(p => addPageRow(p.name, p.kvName, p.codeUrl, p.kvAction, p.show));
       document.getElementById('editModal').classList.add('active');
     }
     
-    function addWorkerRow(name='', kvName='', codeUrl='') {
+    function addWorkerRow(name='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
-      div.innerHTML = '<input class="worker-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
-        '<input class="worker-kv" placeholder="KV 名称" value="' + escapeHtml(kvName) + '">' +
-        '<input class="worker-url" placeholder="代码地址" value="' + escapeHtml(codeUrl) + '"><button class="remove-btn">删除</button>';
+      const kvDisabled = !kvName ? 'disabled' : '';
+      const checked = show !== false ? 'checked' : '';
+      div.innerHTML = '<input type="text" class="worker-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
+        '<input type="text" class="worker-kv" placeholder="KV 名称" value="' + escapeHtml(kvName) + '">' +
+        '<select class="worker-kv-action" style="flex:1; min-width:80px;" ' + kvDisabled + '>' +
+          '<option value="keep" ' + (kvAction==='keep'?'selected':'') + '>保留</option>' +
+          '<option value="clear" ' + (kvAction==='clear'?'selected':'') + '>清空</option>' +
+        '</select>' +
+        '<input type="text" class="worker-url" placeholder="代码地址" value="' + escapeHtml(codeUrl) + '">' +
+        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="worker-show" ' + checked + '> 显示</label>' +
+        '<button class="remove-btn">删除</button>';
+      
+      const kvInput = div.querySelector('.worker-kv');
+      const actionSelect = div.querySelector('.worker-kv-action');
+      kvInput.addEventListener('input', () => { actionSelect.disabled = !kvInput.value.trim(); });
       div.querySelector('.remove-btn').addEventListener('click', () => div.remove());
       document.getElementById('workerList').appendChild(div);
     }
     
-    function addPageRow(name='', kvName='', codeUrl='') {
+    function addPageRow(name='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
-      div.innerHTML = '<input class="page-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
-        '<input class="page-kv" placeholder="KV 名称" value="' + escapeHtml(kvName) + '">' +
-        '<input class="page-url" placeholder="ZIP 地址" value="' + escapeHtml(codeUrl) + '"><button class="remove-btn">删除</button>';
+      const kvDisabled = !kvName ? 'disabled' : '';
+      const checked = show !== false ? 'checked' : '';
+      div.innerHTML = '<input type="text" class="page-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
+        '<input type="text" class="page-kv" placeholder="KV 名称" value="' + escapeHtml(kvName) + '">' +
+        '<select class="page-kv-action" style="flex:1; min-width:80px;" ' + kvDisabled + '>' +
+          '<option value="keep" ' + (kvAction==='keep'?'selected':'') + '>保留</option>' +
+          '<option value="clear" ' + (kvAction==='clear'?'selected':'') + '>清空</option>' +
+        '</select>' +
+        '<input type="text" class="page-url" placeholder="ZIP 地址" value="' + escapeHtml(codeUrl) + '">' +
+        '<label style="display:flex; align-items:center; gap:5px; margin:0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="page-show" ' + checked + '> 显示</label>' +
+        '<button class="remove-btn">删除</button>';
+      
+      const kvInput = div.querySelector('.page-kv');
+      const actionSelect = div.querySelector('.page-kv-action');
+      kvInput.addEventListener('input', () => { actionSelect.disabled = !kvInput.value.trim(); });
       div.querySelector('.remove-btn').addEventListener('click', () => div.remove());
       document.getElementById('pagesList').appendChild(div);
     }
@@ -1740,12 +1634,20 @@ function getAccountsPage() {
       if (!identifier || !accountId || !token) return alert('必填项不能为空');
       
       const workers = []; document.querySelectorAll('#workerList .dynamic-item').forEach(item => {
-        const name = item.querySelector('.worker-name').value.trim(), kvName = item.querySelector('.worker-kv').value.trim(), codeUrl = item.querySelector('.worker-url').value.trim();
-        if (name) workers.push({ name, kvName, codeUrl });
+        const name = item.querySelector('.worker-name').value.trim(), 
+              kvName = item.querySelector('.worker-kv').value.trim(), 
+              kvAction = item.querySelector('.worker-kv-action').value,
+              codeUrl = item.querySelector('.worker-url').value.trim(),
+              show = item.querySelector('.worker-show').checked;
+        if (name) workers.push({ name, kvName, kvAction, codeUrl, show });
       });
       const pages = []; document.querySelectorAll('#pagesList .dynamic-item').forEach(item => {
-        const name = item.querySelector('.page-name').value.trim(), kvName = item.querySelector('.page-kv').value.trim(), codeUrl = item.querySelector('.page-url').value.trim();
-        if (name) pages.push({ name, kvName, codeUrl });
+        const name = item.querySelector('.page-name').value.trim(), 
+              kvName = item.querySelector('.page-kv').value.trim(), 
+              kvAction = item.querySelector('.page-kv-action').value,
+              codeUrl = item.querySelector('.page-url').value.trim(),
+              show = item.querySelector('.page-show').checked;
+        if (name) pages.push({ name, kvName, kvAction, codeUrl, show });
       });
       
       const payload = { identifier, accountId, token, workers, pages };
