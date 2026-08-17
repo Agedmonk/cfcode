@@ -23,12 +23,12 @@ jobs:
         uses: actions/checkout@v5
 
       # 2. 将 install.js 打包为 install.zip
-      - name: Zip install.js
+      - name: 创建压缩文件用于部署pages
         run: |
           zip install.zip install.js
 
       # 3. 将生成的 zip 文件提交并推送到当前仓库
-      - name: Commit and push zip file
+      - name: 将压缩文件推送到当前仓库
         run: |
           # 配置 git 机器人账号信息
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
