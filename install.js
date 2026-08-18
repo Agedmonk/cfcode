@@ -1,4 +1,4 @@
-//2026-08-18 1324
+//2026-08-18 1327
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -661,6 +661,12 @@ function getMainPage() {
     .accordion-content { display: none; padding: 16px; border-top: 1px solid var(--border); }
     .accordion-content.active { display: block; }
     button.action-btn { width: 100%; padding: 12px; margin-top: 10px; }
+    
+    pre { background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+    code { font-family: 'SF Mono', 'Fira Code', monospace; }
+    .info-section { margin-bottom: 20px; }
+    .info-section h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1e293b; }
+    .info-section p { font-size: 13px; color: #475569; margin-bottom: 8px; line-height: 1.6; }
   </style></head><body>
   <div class="container" style="max-width: 600px;">
     <div class="card">
@@ -689,6 +695,76 @@ function getMainPage() {
       </div>
 
       <div style="margin-top: 20px;"><label style="font-size:13px; font-weight:500;">部署日志</label><textarea id="logOutput" readonly placeholder="日志输出..."></textarea></div>
+
+      <div class="accordion" style="margin-top: 15px;">
+        <div class="accordion-header" data-target="infoPanel"><span>📘 使用说明</span><span class="arrow">▶</span></div>
+        <div id="infoPanel" class="accordion-content">
+          <div class="info-section">
+            <h3>📄 页面部署</h3>
+            <p>在表单中填写 Account ID、API Token、KV 名称（可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
+            <p><strong>Worker 示例：</strong></p>
+            <pre><code>Account ID: 8ab2...c8d0
+API Token: cfcut_...
+KV 名称: MY_KV_STORE （可留空）
+项目名称: my-worker-app
+代码源地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js</code></pre>
+            <p><strong>Pages 示例：</strong></p>
+            <pre><code>Account ID: 8ab2...c8d0
+API Token: cfcut_...
+KV 名称: MY_KV_STORE （可留空）
+项目名称: my-pages-site
+ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
+          </div>
+          <div class="info-section">
+            <h3>📡 POST 部署</h3>
+            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式。</p>
+            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 AUTH_PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
+            <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
+            <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer 您的系统访问密码",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    type: "worker",
+    id: "YOUR_ACCOUNT_ID",
+    token: "YOUR_API_TOKEN",
+    kv: "MY_KV_STORE",
+    kvAction: "keep",
+    name: "my-worker-app",
+    source: "default"
+  })
+}).then(res => res.json()).then(console.log);</code></pre>
+            <p><strong>cURL JSON 格式（使用 URL 传参鉴权）：</strong></p>
+            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy?pwd=您的系统访问密码" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "type": "worker",
+    "id": "YOUR_ACCOUNT_ID",
+    "token": "YOUR_API_TOKEN",
+    "kv": "MY_KV_STORE",
+    "kvAction": "keep",
+    "source": "default",
+    "name": "my-worker-app"
+  }'</code></pre>
+            <p><strong>cURL 表单格式（使用 Header 鉴权）：</strong></p>
+            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
+  -H "Authorization: Bearer 您的系统访问密码" \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
+            <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
+          </div>
+          <div class="info-section">
+            <h3>🔗 GET 部署</h3>
+            <p>直接在浏览器地址栏或脚本中通过 URL 调用。</p>
+            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
+            <p>Pages 部署示例：</p>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
+          </div>
+        </div>
+      </div>
 
       <div class="nav-links">
         <a href="/dashboard">📋 常用部署面板</a>
