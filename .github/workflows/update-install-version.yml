@@ -1,0 +1,47 @@
+name: 同步install.js的版本号
+
+on:
+  push:
+    branches:
+      - main
+    # 忽略 version.json 自身的变动，防止机器人提交后再次触发工作流导致死循环
+    paths-ignore:
+      - 'version.json'
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update version.json
+        run: |
+          # 设置时区为东八区 (保持与你习惯的北京/新加坡时间一致)
+          export TZ="Asia/Shanghai"
+          
+          # 生成新的版本号，格式：1.0.YYYYMMDDHHMM
+          NEW_VERSION="1.0.$(date +'%Y%m%d%H%M')"
+          
+          # 覆写 version.json
+          echo "{\"version\": \"$NEW_VERSION\"}" > version.json
+          
+          echo "New version generated: $NEW_VERSION"
+
+      - name: Commit and push changes
+        run: |
+          # 配置机器人的 Git 信息
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add version.json
+          
+          # 检查是否有变动，如果有则提交并推送
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: install.js的版本号更新为$(grep -oP '(?<="version": ")[^"]*' version.json) [skip ci]"
+            git push
+          else
+            echo "No changes to commit"
+          fi
