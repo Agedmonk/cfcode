@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608181527"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181536"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -680,6 +680,7 @@ function getLoginPage(errorMsg = "") {
       <button class="btn-primary" type="submit">登 录</button>
     </form>
   </div>
+  <script>${GLOBAL_SCRIPT}</script>
 </body></html>`;
 }
 
@@ -824,6 +825,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
   </div>
 
   <script>
+	${GLOBAL_SCRIPT}
     (function(){
       // 预先拉取账户数据以备自动更新使用
       let allAccountsForUpdate = [];
@@ -1242,6 +1244,7 @@ function getAccountsPage() {
   </div>
 
   <script>
+    ${GLOBAL_SCRIPT}
     const ICONS = ${JSON.stringify(ICONS)};
     let accounts = [];
     let editingIdentifier = null;
