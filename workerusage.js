@@ -630,7 +630,7 @@ async function handleSpecificDisplayPage(env, targetTag, hostname) {
   return new Response(html, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
 
-// --- 设置页逻辑（动态支持拖拽、新增、删除，新增多级折叠功能） ---
+// --- 设置页逻辑（图片风格 UI + 上下箭头排序 + 密码可见功能） ---
 async function handleSettingPage(env) {
   let data = JSON.parse(await env.KV_DATA.get('WORKER_CONFIG') || '[]');
   if(data.length === 0) data.push({ id: generateId(), tag: '', userId: '', apiKey: '', showOnHome: true, aliases: {} });
@@ -679,49 +679,61 @@ async function handleSettingPage(env) {
     const tagDisplay = item.tag || '未命名节点';
 
     return `
-      <div class="node-card bg-white rounded-xl shadow-sm border border-gray-200 mb-5 relative group overflow-hidden" data-id="${item.id || generateId()}">
+      <div class="node-card bg-white rounded-lg border border-gray-100 mb-3 group relative" data-id="${item.id || generateId()}">
         
-        <!-- 卡片头部：点击展开/折叠整个账号 -->
-        <div class="cursor-pointer bg-gray-50 hover:bg-gray-100 flex justify-between items-center p-4 border-b border-gray-100 transition node-header" onclick="toggleNode(this)">
-          <div class="flex items-center space-x-3">
-            <div class="cursor-move text-gray-400 hover:text-blue-500 transition drag-handle p-1" title="拖拽排序" onclick="event.stopPropagation()">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
-            </div>
-            <h3 class="text-md font-bold text-gray-800 flex items-center gap-2">
-              <span class="node-title-display">👤 ${tagDisplay}</span>
-              <svg class="w-4 h-4 text-gray-500 transform transition-transform duration-200 chevron-icon rotate-180" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-            </h3>
+        <!-- 卡片头部：清爽单行风格 -->
+        <div class="cursor-pointer flex justify-between items-center p-4 hover:bg-gray-50 transition node-header" onclick="toggleNode(this)">
+          <div class="flex items-center space-x-2 w-1/2 overflow-hidden">
+            <span class="node-title-display text-sm font-medium text-gray-700 truncate">${tagDisplay}</span>
+            <span class="text-red-500 text-xs hidden-label flex-shrink-0 ${isShow ? 'hidden' : ''}">[隐藏]</span>
           </div>
-          <div class="flex items-center space-x-4" onclick="event.stopPropagation()">
-            <label class="flex items-center space-x-1.5 text-sm font-medium text-gray-600 cursor-pointer select-none">
-              <input type="checkbox" class="show-on-home-checkbox w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer" ${isShow ? 'checked' : ''}>
-              <span>主页展示</span>
-            </label>
-            <button type="button" class="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded text-xs font-semibold transition delete-node-btn">删除</button>
+          
+          <!-- 右侧图标操作区 -->
+          <div class="flex items-center space-x-3 text-gray-400" onclick="event.stopPropagation()">
+            <button type="button" class="hover:text-gray-700 transition" onclick="moveUp(this)" title="向上移动">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+            </button>
+            <button type="button" class="hover:text-gray-700 transition" onclick="moveDown(this)" title="向下移动">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
+            </button>
+            <button type="button" class="hover:text-orange-500 transition" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" title="编辑">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+            </button>
+            <button type="button" class="hover:text-red-500 text-red-400 transition" onclick="removeNode(this)" title="删除">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+            <svg class="w-4 h-4 transition-transform duration-200 chevron-icon cursor-pointer" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
           </div>
         </div>
         
         <!-- 账号详细配置区：默认隐藏 -->
-        <div class="node-content hidden p-5">
+        <div class="node-content hidden p-5 bg-gray-50/50 border-t border-gray-100">
+          <label class="flex items-center space-x-1.5 text-sm font-medium text-gray-600 mb-4 cursor-pointer select-none">
+            <input type="checkbox" class="show-on-home-checkbox w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer" ${isShow ? 'checked' : ''} onchange="updateHiddenLabel(this)">
+            <span>在主页展示该节点</span>
+          </label>
+          
           <div class="space-y-3 mb-5">
-            <input type="text" name="tag" value="${item.tag}" placeholder="网页标签名称 (如 niclai.vip)" class="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-sm" oninput="updateNodeTitle(this)" />
-            <input type="text" name="userId" value="${item.userId}" placeholder="Cloudflare 账号 ID" class="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-sm font-mono" />
+            <input type="text" name="tag" value="${item.tag}" placeholder="网页标签名称 (如 niclai.vip)" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm shadow-sm" oninput="updateNodeTitle(this)" />
+            <input type="text" name="userId" value="${item.userId}" placeholder="Cloudflare 账号 ID" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
+            
+            <!-- 带眼睛切换的密码框 -->
             <div class="relative w-full">
-			  <input type="password" name="apiKey" value="${item.apiKey}" placeholder="API 令牌 (需 Read 权限)" class="w-full px-4 py-2.5 pr-10 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-sm font-mono" />
-			  <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)" title="显示/隐藏 API 令牌">
-				<svg class="w-5 h-5 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
-				<svg class="w-5 h-5 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.543 7-1.274 4.057-5.064 7-9.543 7-4.477 0-8.268-2.943-9.543-7z"></path></svg>
-			  </button>
-			</div>
+              <input type="password" name="apiKey" value="${item.apiKey}" placeholder="API 令牌 (需 Read 权限)" class="w-full px-4 py-2.5 pr-10 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
+              <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)" title="显示/隐藏">
+                <svg class="w-5 h-5 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
+                <svg class="w-5 h-5 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.543 7-1.274 4.057-5.064 7-9.543 7-4.477 0-8.268-2.943-9.543-7z"></path></svg>
+              </button>
+            </div>
           </div>
 
           <!-- 别名配置区：点击可展开/折叠 -->
-          <div class="bg-gray-50/80 rounded-lg border border-gray-100 overflow-hidden">
-            <div class="px-4 py-3 cursor-pointer flex justify-between items-center bg-gray-100/50 hover:bg-gray-200/50 transition alias-header" onclick="toggleAlias(this)">
+          <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 cursor-pointer flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition alias-header" onclick="toggleAlias(this)">
               <h4 class="text-xs font-bold text-gray-600 flex items-center gap-1">🏷️ 项目别名配置</h4>
               <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-200 alias-chevron rotate-180" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
             </div>
-            <div class="alias-content hidden p-3 max-h-64 overflow-y-auto custom-scrollbar">
+            <div class="alias-content hidden p-3 max-h-64 overflow-y-auto custom-scrollbar bg-gray-50/50">
               ${aliasRowsHtml}
             </div>
           </div>
@@ -736,79 +748,88 @@ async function handleSettingPage(env) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-      <title>参数配置</title>
+      <title>账户与配置管理</title>
       <script src="https://cdn.tailwindcss.com"></script>
-      <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
       <style>
-        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
-        .sortable-ghost { opacity: 0.4; }
+        /* 使用更现代、清爽的无衬线中文字体替换默认字体 */
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft YaHei", Tahoma, Simsun, sans-serif;
+          background-color: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        /* 避免动画导致文字模糊 */
+        .node-card { transform: translateZ(0); }
       </style>
     </head>
-    <body class="bg-gray-50 min-h-screen py-10 px-4">
-      <div class="max-w-3xl mx-auto w-full relative">
-        <div class="flex justify-between items-center mb-8 w-full bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-          <h1 class="text-xl md:text-2xl font-extrabold text-gray-800 tracking-tight">授权与排序配置</h1>
-          <a href="/NicholasLai" class="text-blue-600 font-medium hover:text-blue-800 transition flex items-center gap-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            返回概览
-          </a>
-        </div>
+    <body class="min-h-screen py-8 px-4 flex justify-center items-start">
+      <div class="w-full max-w-4xl bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8">
+        
+        <!-- 头部标题 -->
+        <h1 class="text-xl md:text-2xl font-bold text-gray-800 tracking-wide mb-8 flex justify-center items-center gap-3">
+          <svg class="w-7 h-7 text-indigo-800" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
+          账户与配置管理
+        </h1>
         
         <form id="settings-form">
-          <div id="node-list" class="space-y-4">
+          <div id="node-list" class="space-y-3">
             ${cardsHtml}
           </div>
           
-          <button type="button" id="add-node-btn" class="mt-4 w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-bold hover:bg-gray-50 hover:border-blue-400 hover:text-blue-500 transition-colors flex justify-center items-center gap-2">
+          <!-- 大号橘色添加按钮 -->
+          <button type="button" id="add-node-btn" class="w-full bg-[#f97316] hover:bg-[#ea580c] text-white font-bold py-3.5 rounded-lg shadow-sm transition-colors mt-4 flex justify-center items-center gap-1">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-            添加新节点
+            添加新账户
           </button>
           
-          <button type="submit" id="save-btn" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all mt-8 sticky bottom-6 z-10 text-lg flex justify-center items-center gap-2">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-            保存并应用配置
-          </button>
+          <!-- 底部小号操作按钮 -->
+          <div class="flex justify-center items-center gap-4 mt-8 pt-6 border-t border-gray-100">
+            <button type="submit" id="save-btn" class="px-5 py-2 bg-white border border-gray-200 rounded-md text-gray-600 text-sm hover:bg-gray-50 flex items-center gap-2 shadow-sm transition focus:outline-none">
+              <span class="text-gray-400">📄</span> 保存并应用
+            </button>
+            <a href="/NicholasLai" class="px-5 py-2 bg-white border border-gray-200 rounded-md text-gray-600 text-sm hover:bg-gray-50 flex items-center gap-2 shadow-sm transition">
+              <span class="text-orange-500">🏠</span> 返回主页
+            </a>
+          </div>
         </form>
       </div>
 
       <!-- 新增节点时的模板 -->
       <template id="node-template">
-        <div class="node-card bg-white rounded-xl shadow-sm border border-gray-200 mb-5 relative group overflow-hidden" data-id="">
-          <div class="cursor-pointer bg-gray-50 hover:bg-gray-100 flex justify-between items-center p-4 border-b border-gray-100 transition node-header" onclick="toggleNode(this)">
-            <div class="flex items-center space-x-3">
-              <div class="cursor-move text-gray-400 hover:text-blue-500 transition drag-handle p-1" title="拖拽排序" onclick="event.stopPropagation()">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
-              </div>
-              <h3 class="text-md font-bold text-gray-800 flex items-center gap-2">
-                <span class="node-title-display">👤 新增节点</span>
-                <svg class="w-4 h-4 text-gray-500 transform transition-transform duration-200 chevron-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-              </h3>
+        <div class="node-card bg-white rounded-lg border border-gray-100 mb-3 group relative" data-id="">
+          <div class="cursor-pointer flex justify-between items-center p-4 hover:bg-gray-50 transition node-header" onclick="toggleNode(this)">
+            <div class="flex items-center space-x-2 w-1/2 overflow-hidden">
+              <span class="node-title-display text-sm font-medium text-gray-700 truncate">未命名节点</span>
+              <span class="text-red-500 text-xs hidden-label flex-shrink-0 hidden">[隐藏]</span>
             </div>
-            <div class="flex items-center space-x-4" onclick="event.stopPropagation()">
-              <label class="flex items-center space-x-1.5 text-sm font-medium text-gray-600 cursor-pointer select-none">
-                <input type="checkbox" class="show-on-home-checkbox w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer" checked>
-                <span>主页展示</span>
-              </label>
-              <button type="button" class="text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded text-xs font-semibold transition delete-node-btn">删除</button>
+            <div class="flex items-center space-x-3 text-gray-400" onclick="event.stopPropagation()">
+              <button type="button" class="hover:text-gray-700 transition" onclick="moveUp(this)"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg></button>
+              <button type="button" class="hover:text-gray-700 transition" onclick="moveDown(this)"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></button>
+              <button type="button" class="hover:text-orange-500 transition" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>
+              <button type="button" class="hover:text-red-500 text-red-400 transition" onclick="removeNode(this)"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+              <svg class="w-4 h-4 transition-transform duration-200 chevron-icon cursor-pointer rotate-180" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
           </div>
           
-          <!-- 新建的节点默认展开，方便立刻输入内容 -->
-          <div class="node-content p-5">
+          <div class="node-content p-5 bg-gray-50/50 border-t border-gray-100">
+            <label class="flex items-center space-x-1.5 text-sm font-medium text-gray-600 mb-4 cursor-pointer select-none">
+              <input type="checkbox" class="show-on-home-checkbox w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer" checked onchange="updateHiddenLabel(this)">
+              <span>在主页展示该节点</span>
+            </label>
             <div class="space-y-3 mb-5">
-              <input type="text" name="tag" value="" placeholder="网页标签名称 (如 niclai.vip)" class="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition text-sm" oninput="updateNodeTitle(this)" />
-              <input type="text" name="userId" value="" placeholder="Cloudflare 账号 ID" class="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono" />
+              <input type="text" name="tag" value="" placeholder="网页标签名称 (如 niclai.vip)" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm shadow-sm" oninput="updateNodeTitle(this)" />
+              <input type="text" name="userId" value="" placeholder="Cloudflare 账号 ID" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
               <div class="relative w-full">
-				  <input type="password" name="apiKey" value="" placeholder="API 令牌 (需 Read 权限)" class="w-full px-4 py-2.5 pr-10 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono" />
-				  <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)" title="显示/隐藏 API 令牌">
-					<svg class="w-5 h-5 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
-					<svg class="w-5 h-5 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.543 7-1.274 4.057-5.064 7-9.543 7-4.477 0-8.268-2.943-9.543-7z"></path></svg>
-				  </button>
-			  </div>
+                <input type="password" name="apiKey" value="" placeholder="API 令牌 (需 Read 权限)" class="w-full px-4 py-2.5 pr-10 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
+                <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)">
+                  <svg class="w-5 h-5 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
+                  <svg class="w-5 h-5 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.543 7-1.274 4.057-5.064 7-9.543 7-4.477 0-8.268-2.943-9.543-7z"></path></svg>
+                </button>
+              </div>
             </div>
-            <div class="bg-gray-50/80 rounded-lg p-3 border border-gray-100 text-xs text-gray-400 text-center py-5">
+            <div class="bg-white rounded-lg p-3 border border-gray-100 shadow-sm text-xs text-gray-400 text-center py-5">
               填写账号并保存后，系统将自动扫描项目以供配置别名。
             </div>
           </div>
@@ -816,18 +837,47 @@ async function handleSettingPage(env) {
       </template>
 
       <script>
-        // 初始化拖拽
-        const nodeList = document.getElementById('node-list');
-        new Sortable(nodeList, { handle: '.drag-handle', animation: 200, ghostClass: 'sortable-ghost' });
-
-        // 删除事件委托
-        nodeList.addEventListener('click', (e) => {
-          if (e.target.closest('.delete-node-btn')) {
-            const card = e.target.closest('.node-card');
-            card.style.opacity = '0';
-            setTimeout(() => card.remove(), 200);
+        // 上下箭头排序功能
+        function moveUp(btn) {
+          const current = btn.closest('.node-card');
+          const prev = current.previousElementSibling;
+          if (prev) {
+            current.parentNode.insertBefore(current, prev);
           }
-        });
+        }
+
+        function moveDown(btn) {
+          const current = btn.closest('.node-card');
+          const next = current.nextElementSibling;
+          if (next) {
+            current.parentNode.insertBefore(next, current);
+          }
+        }
+
+        // 密码框开合眼切换
+        function togglePassword(btn) {
+          const container = btn.closest('.relative');
+          const input = container.querySelector('input[name="apiKey"]');
+          const iconClosed = btn.querySelector('.eye-closed');
+          const iconOpen = btn.querySelector('.eye-open');
+          
+          if (input.type === 'password') {
+            input.type = 'text';
+            iconClosed.classList.add('hidden');
+            iconOpen.classList.remove('hidden');
+          } else {
+            input.type = 'password';
+            iconClosed.classList.remove('hidden');
+            iconOpen.classList.add('hidden');
+          }
+        }
+
+        // 删除节点
+        function removeNode(btn) {
+          const card = btn.closest('.node-card');
+          card.style.opacity = '0';
+          setTimeout(() => card.remove(), 200);
+        }
 
         // 账号层级的展开折叠
         function toggleNode(headerElement) {
@@ -835,10 +885,10 @@ async function handleSettingPage(env) {
           const icon = headerElement.querySelector('.chevron-icon');
           if (content.classList.contains('hidden')) {
             content.classList.remove('hidden');
-            icon.classList.remove('rotate-180');
+            icon.classList.add('rotate-180');
           } else {
             content.classList.add('hidden');
-            icon.classList.add('rotate-180');
+            icon.classList.remove('rotate-180');
           }
         }
 
@@ -859,7 +909,17 @@ async function handleSettingPage(env) {
         function updateNodeTitle(inputElement) {
           const titleSpan = inputElement.closest('.node-card').querySelector('.node-title-display');
           if (titleSpan) {
-            titleSpan.textContent = '👤 ' + (inputElement.value || '未命名节点');
+            titleSpan.textContent = inputElement.value || '未命名节点';
+          }
+        }
+
+        // 动态更新隐藏标签
+        function updateHiddenLabel(checkbox) {
+          const label = checkbox.closest('.node-card').querySelector('.hidden-label');
+          if (checkbox.checked) {
+            label.classList.add('hidden');
+          } else {
+            label.classList.remove('hidden');
           }
         }
 
@@ -868,14 +928,14 @@ async function handleSettingPage(env) {
           const template = document.getElementById('node-template').content.cloneNode(true);
           const newCard = template.querySelector('.node-card');
           newCard.dataset.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
-          nodeList.appendChild(newCard);
+          document.getElementById('node-list').appendChild(newCard);
         });
 
         // 保存配置
         document.getElementById('settings-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = document.getElementById('save-btn');
-          btn.innerHTML = '<svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 保存中...';
+          btn.innerHTML = '<span class="animate-spin mr-1">⌛</span> 保存中...';
           btn.disabled = true;
 
           const cards = document.querySelectorAll('.node-card');
@@ -911,24 +971,6 @@ async function handleSettingPage(env) {
           }
           btn.disabled = false;
         });
-		
-		// 切换密码框可见性
-		function togglePassword(btn) {
-		  const container = btn.closest('.relative');
-		  const input = container.querySelector('input[name="apiKey"]');
-		  const iconClosed = btn.querySelector('.eye-closed');
-		  const iconOpen = btn.querySelector('.eye-open');
-		  
-		  if (input.type === 'password') {
-			input.type = 'text';
-			iconClosed.classList.add('hidden');
-			iconOpen.classList.remove('hidden');
-		  } else {
-			input.type = 'password';
-			iconClosed.classList.remove('hidden');
-			iconOpen.classList.add('hidden');
-		  }
-		}
       </script>
     </body>
     </html>
