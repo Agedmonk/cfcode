@@ -372,9 +372,9 @@ function generateCardHtml(tag, usageData, quota = 100000) {
   const safeTag = tag || "未命名节点";
   if (usageData.totalCount === null) {
     return `
-      <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-center items-center text-center">
-        <h2 class="text-lg font-bold text-gray-800 mb-4 w-full truncate">${safeTag}</h2>
-        <div class="text-sm text-red-500 bg-red-50 px-3 py-1 rounded-full border border-red-100">未配置或 API 令牌错误</div>
+      <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-center items-center text-center h-full">
+        <h2 class="text-base font-bold text-gray-800 mb-4 w-full truncate">${safeTag}</h2>
+        <div class="text-xs text-red-500 bg-red-50 px-3 py-1.5 rounded border border-red-100">未配置或 API 令牌错误</div>
       </div>
     `;
   }
@@ -385,43 +385,43 @@ function generateCardHtml(tag, usageData, quota = 100000) {
   const pagesPercent = totalCount === 0 ? 0 : ((pagesCount / quota) * 100).toFixed(1);
 
   const renderItem = (item, colorClass, bgClass) => `
-    <div class="flex justify-between items-center bg-gray-50 hover:bg-gray-100 px-3 py-2 rounded-lg transition-all cursor-pointer project-item active:scale-[0.98]" 
+    <div class="flex justify-between items-center bg-gray-50 hover:bg-gray-100 px-3 py-2.5 rounded-md transition-colors cursor-pointer project-item active:scale-[0.99] border border-transparent hover:border-gray-200" 
          data-name="${item.name.replace(/"/g, '&quot;')}" data-raw="${item.rawName.replace(/"/g, '&quot;')}" data-count="${item.count}">
       <div class="flex items-center space-x-2 min-w-0 flex-1">
         <span class="w-2 h-2 rounded-full ${bgClass} flex-shrink-0"></span>
-        <span class="text-xs text-gray-700 truncate">${item.name}</span>
+        <span class="text-xs text-gray-700 truncate font-medium">${item.name}</span>
       </div>
       <span class="text-xs font-semibold ${item.count === 0 ? 'text-gray-400' : colorClass} font-mono ml-2 flex-shrink-0">${item.count.toLocaleString()}</span>
     </div>
   `;
 
-  const workersHtml = workersDetails.length ? workersDetails.map(w => renderItem(w, 'text-emerald-700', 'bg-emerald-500')).join('') 
+  const workersHtml = workersDetails.length ? workersDetails.map(w => renderItem(w, 'text-emerald-600', 'bg-emerald-500')).join('') 
     : `<div class="text-xs text-gray-400 text-center py-6">${workerCount > 0 ? '有用量但项目列表获取失败' : '暂无 Workers 项目'}</div>`;
-  const pagesHtml = pagesDetails.length ? pagesDetails.map(p => renderItem(p, 'text-blue-700', 'bg-blue-500')).join('') 
+  const pagesHtml = pagesDetails.length ? pagesDetails.map(p => renderItem(p, 'text-blue-600', 'bg-blue-500')).join('') 
     : `<div class="text-xs text-gray-400 text-center py-6">${pagesCount > 0 ? '有用量但项目列表获取失败' : '暂无 Pages 项目'}</div>`;
 
   const detailsHtml = `
     <div class="mt-2 pt-4 border-t border-gray-100">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-2 gap-3">
         <!-- 左：全部 Workers -->
-        <div class="rounded-xl border border-emerald-100 bg-emerald-50/40 overflow-hidden flex flex-col">
-          <div class="px-3 py-2.5 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-              <span class="text-xs font-bold text-emerald-700">Workers</span>
+        <div class="rounded-lg border border-gray-100 bg-white overflow-hidden flex flex-col shadow-sm">
+          <div class="px-3 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-sm bg-emerald-500"></span>
+              <span class="text-xs font-bold text-gray-600">Workers</span>
             </div>
           </div>
-          <div class="p-2 space-y-1.5 max-h-72 overflow-y-auto custom-scrollbar">${workersHtml}</div>
+          <div class="p-1.5 space-y-1 max-h-64 overflow-y-auto custom-scrollbar">${workersHtml}</div>
         </div>
         <!-- 右：全部 Pages -->
-        <div class="rounded-xl border border-blue-100 bg-blue-50/40 overflow-hidden flex flex-col">
-          <div class="px-3 py-2.5 bg-blue-50 border-b border-blue-100 flex justify-between items-center">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-              <span class="text-xs font-bold text-blue-700">Pages</span>
+        <div class="rounded-lg border border-gray-100 bg-white overflow-hidden flex flex-col shadow-sm">
+          <div class="px-3 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-sm bg-blue-500"></span>
+              <span class="text-xs font-bold text-gray-600">Pages</span>
             </div>
           </div>
-          <div class="p-2 space-y-1.5 max-h-72 overflow-y-auto custom-scrollbar">${pagesHtml}</div>
+          <div class="p-1.5 space-y-1 max-h-64 overflow-y-auto custom-scrollbar">${pagesHtml}</div>
         </div>
       </div>
       ${debugInfo ? `<div class="mt-3 text-center"><span class="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-100">${debugInfo}</span></div>` : ''}
@@ -429,29 +429,29 @@ function generateCardHtml(tag, usageData, quota = 100000) {
   `;
 
   return `
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-300 flex flex-col">
-      <div class="px-5 py-4 cursor-pointer flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition" onclick="toggleModule(this)">
-        <h2 class="text-md font-bold text-gray-800 truncate select-none">${safeTag} 概览</h2>
-        <svg class="w-5 h-5 text-gray-400 transform transition-transform duration-300" viewBox="0 0 20 20" fill="currentColor">
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-300 flex flex-col">
+      <div class="px-5 py-4 cursor-pointer flex justify-between items-center hover:bg-gray-50 transition" onclick="toggleModule(this)">
+        <h2 class="text-sm font-bold text-gray-700 truncate select-none">${safeTag}</h2>
+        <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-300" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </div>
-      <div class="px-5 py-4">
-        <div class="w-full bg-gray-100 rounded-full h-7 relative overflow-hidden shadow-inner flex">
+      <div class="px-5 py-3">
+        <div class="w-full bg-gray-100 rounded-md h-5 relative overflow-hidden flex">
           <div class="h-full bg-emerald-500 transition-all duration-500" style="width: ${workerPercent}%;" title="Workers: ${workerCount}"></div>
           <div class="h-full bg-blue-500 transition-all duration-500" style="width: ${pagesPercent}%;" title="Pages: ${pagesCount}"></div>
-          <div class="absolute inset-0 flex items-center justify-center text-xs font-bold tracking-wide ${totalPercent} > 50 ? 'text-white drop-shadow-md' : 'text-gray-700'}">${totalPercent}%</div>
+          <div class="absolute inset-0 flex items-center justify-center text-[10px] font-bold tracking-wide ${totalPercent > 50 ? 'text-white drop-shadow-md' : 'text-gray-700'}">${totalPercent}%</div>
         </div>
       </div>
-      <div class="module-content hidden px-5 pb-5 border-t border-gray-100 pt-4">
-        <div class="grid grid-cols-2 gap-3 text-center">
-          <div class="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
-            <div class="text-[10px] text-emerald-600 mb-1 font-medium">Workers 汇总</div>
-            <div class="text-sm font-bold text-emerald-700">${workerCount.toLocaleString()}</div>
+      <div class="module-content hidden px-5 pb-5 border-t border-gray-50 pt-4 bg-gray-50/30">
+        <div class="grid grid-cols-2 gap-3 text-center mb-1">
+          <div class="py-2 px-1 bg-white rounded-md border border-gray-100 shadow-sm">
+            <div class="text-[10px] text-gray-500 mb-0.5 font-medium">Workers 汇总</div>
+            <div class="text-sm font-bold text-emerald-600">${workerCount.toLocaleString()}</div>
           </div>
-          <div class="p-2 bg-blue-50 rounded-lg border border-blue-100">
-            <div class="text-[10px] text-blue-600 mb-1 font-medium">Pages 汇总</div>
-            <div class="text-sm font-bold text-blue-700">${pagesCount.toLocaleString()}</div>
+          <div class="py-2 px-1 bg-white rounded-md border border-gray-100 shadow-sm">
+            <div class="text-[10px] text-gray-500 mb-0.5 font-medium">Pages 汇总</div>
+            <div class="text-sm font-bold text-blue-600">${pagesCount.toLocaleString()}</div>
           </div>
         </div>
         ${detailsHtml}
@@ -462,34 +462,39 @@ function generateCardHtml(tag, usageData, quota = 100000) {
 
 // --- 页面大盘基础布局 ---
 function buildPageLayout(title, contentHtml, isSubPage = false) {
-  const backBtnHtml = isSubPage ? `<div class="mb-6"><a href="/NicholasLai" class="inline-flex items-center text-blue-600 font-medium hover:text-blue-800 transition">← 返回监控面板</a></div>` : '';
-  const bottomActionHtml = !isSubPage ? `<div class="flex justify-center mt-12 w-full"><a href="/NicholasLai/setting" class="w-full md:w-64 bg-gray-800 text-white text-center font-bold py-4 rounded-full shadow-lg hover:bg-gray-700 transition transform hover:scale-105 active:scale-95 duration-200">⚙️ 账号与授权配置</a></div>` : '';
+  const backBtnHtml = isSubPage ? `<div class="mb-6"><a href="/NicholasLai" class="inline-flex items-center text-blue-600 font-medium hover:text-blue-800 transition text-sm">← 返回监控面板</a></div>` : '';
+  const bottomActionHtml = !isSubPage ? `
+    <div class="flex justify-center mt-10 w-full pt-6 border-t border-gray-200">
+      <a href="/NicholasLai/setting" class="px-6 py-2.5 bg-white border border-gray-200 rounded-md text-gray-600 text-sm font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm transition">
+        <span class="text-orange-500">⚙️</span> 账户与配置管理
+      </a>
+    </div>` : '';
 
   const modalHtml = `
     <div id="detailsModal" class="fixed inset-0 z-50 hidden bg-gray-900 bg-opacity-40 backdrop-blur-sm flex items-center justify-center p-4 transition-opacity duration-300 opacity-0" onclick="if(event.target === this) closeModal()">
-      <div class="modal-content-scale bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-300">
-        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
-          <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">🔍 项目详情</h3>
-          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded-full p-1 transition">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      <div class="modal-content-scale bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-300">
+        <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+          <h3 class="text-base font-bold text-gray-700 flex items-center gap-2">🔍 项目详情</h3>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded p-1 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>
-        <div class="p-6 space-y-5">
-          <div class="bg-blue-50/50 p-4 rounded-xl border border-blue-100/50">
-            <span class="text-xs font-semibold text-blue-600 mb-1 block uppercase tracking-wider">显示名称</span>
-            <div id="modalName" class="font-bold text-gray-800 text-lg break-all"></div>
+        <div class="p-6 space-y-4">
+          <div class="bg-gray-50 p-4 rounded-md border border-gray-100">
+            <span class="text-xs font-semibold text-gray-500 mb-1 block uppercase tracking-wider">显示名称</span>
+            <div id="modalName" class="font-bold text-gray-800 text-base break-all"></div>
           </div>
           <div>
             <span class="text-xs font-semibold text-gray-500 mb-1 block uppercase tracking-wider">原始 ID (Raw Name)</span>
-            <div id="modalRawName" class="text-sm font-mono text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200 break-all"></div>
+            <div id="modalRawName" class="text-xs font-mono text-gray-600 bg-gray-50 p-2.5 rounded-md border border-gray-200 break-all"></div>
           </div>
           <div>
             <span class="text-xs font-semibold text-gray-500 mb-1 block uppercase tracking-wider">今日请求总计</span>
-            <div id="modalCount" class="text-2xl font-bold text-emerald-600 font-mono tracking-tight drop-shadow-sm"></div>
+            <div id="modalCount" class="text-xl font-bold text-blue-600 font-mono tracking-tight"></div>
           </div>
         </div>
-        <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-end">
-          <button onclick="closeModal()" class="px-5 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition shadow-sm">关闭</button>
+        <div class="bg-gray-50 px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button onclick="closeModal()" class="px-5 py-1.5 bg-white border border-gray-300 rounded text-sm font-medium text-gray-600 hover:bg-gray-50 transition shadow-sm">关闭</button>
         </div>
       </div>
     </div>
@@ -501,23 +506,30 @@ function buildPageLayout(title, contentHtml, isSubPage = false) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-      <title>${title}监控系统</title>
+      <title>${title}</title>
       <script src="https://cdn.tailwindcss.com"></script>
       <style>
-        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft YaHei", Tahoma, Simsun, sans-serif;
+          background-color: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
       </style>
     </head>
-    <body class="bg-gray-50 min-h-screen py-10 px-4">
-      <div class="max-w-6xl mx-auto w-full relative">
+    <body class="min-h-screen py-8 px-4 flex justify-center items-start">
+      <div class="max-w-6xl w-full">
         ${backBtnHtml}
-        <div class="text-center mb-10 w-full flex flex-col items-center">
-          <h1 class="text-3xl md:text-4xl font-extrabold text-gray-800 tracking-tight mb-4 break-words px-2">${title}</h1>
-          <div class="text-sm md:text-base text-gray-600 font-medium bg-white border border-gray-200 inline-flex flex-wrap justify-center items-center px-6 py-2.5 rounded-full shadow-sm">
-            <span class="mr-2">⏱️</span><span>每日额度重置倒计时：</span>
-            <span class="countdown-timer text-blue-600 font-bold ml-1 tracking-wider">计算中...</span>
+        <div class="text-center mb-8 w-full flex flex-col items-center">
+          <h1 class="text-xl md:text-2xl font-bold text-gray-800 tracking-wide mb-4 flex justify-center items-center gap-3">
+            <svg class="w-6 h-6 text-indigo-800" fill="currentColor" viewBox="0 0 20 20"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg>
+            ${title}
+          </h1>
+          <div class="text-xs text-gray-600 font-medium bg-white border border-gray-200 inline-flex justify-center items-center px-4 py-1.5 rounded shadow-sm">
+            <span>每日额度重置倒计时：</span>
+            <span class="countdown-timer text-orange-500 font-bold ml-1 tracking-wider">计算中...</span>
           </div>
         </div>
         ${contentHtml}
@@ -587,6 +599,7 @@ async function handleDisplayPage(env) {
   return new Response(buildPageLayout("Cloudflare 用量", contentHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
 
+// --- 独立单节点展示页逻辑 ---
 async function handleSpecificDisplayPage(env, targetTag, hostname) {
   const configData = JSON.parse(await env.KV_DATA.get('WORKER_CONFIG') || '[]');
   const item = configData.find(c => c.tag === targetTag);
@@ -602,25 +615,31 @@ async function handleSpecificDisplayPage(env, targetTag, hostname) {
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
       <title>${item.tag} 运行状态</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft YaHei", Tahoma, Simsun, sans-serif;
+          background-color: #f1f5f9;
+        }
+      </style>
     </head>
-    <body class="flex items-center justify-center p-4 bg-gray-50 min-h-screen">
+    <body class="flex items-start justify-center pt-10 px-4 min-h-screen">
       <div class="w-full max-w-md">
         <div class="text-center mb-6">
-           <div class="text-xs text-gray-600 bg-white border border-gray-200 inline-flex items-center px-5 py-2 rounded-full shadow-sm">
-             每日额度重置倒计时：<span class="countdown-timer font-bold tracking-wider ml-1 text-blue-600">计算中...</span>
+           <div class="text-xs text-gray-600 bg-white border border-gray-200 inline-flex items-center px-4 py-1.5 rounded shadow-sm">
+             每日重置倒计时：<span class="countdown-timer font-bold tracking-wider ml-1 text-orange-500">计算中...</span>
            </div>
         </div>
         ${cardHtml}
       </div>
-      <!-- 注入简易弹窗，不使用全局的复杂版以便保持单页轻量 -->
+      <!-- 注入简易弹窗 -->
       <div id="detailsModal" class="fixed inset-0 z-50 hidden bg-gray-900 bg-opacity-40 backdrop-blur-sm flex items-center justify-center p-4" onclick="if(event.target === this) closeModal()">
-        <div class="modal-content-scale bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden transform transition-all duration-300">
+        <div class="modal-content-scale bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden transform transition-all duration-300">
            <div class="p-5 space-y-4">
-             <div><span class="text-xs text-gray-500">显示名称</span><div id="modalName" class="font-medium text-gray-800 break-all text-lg"></div></div>
-             <div><span class="text-xs text-gray-500">原始 ID</span><div id="modalRawName" class="text-sm font-mono text-gray-600 bg-gray-50 p-2 rounded break-all mt-1"></div></div>
-             <div><span class="text-xs text-gray-500">今日请求量</span><div id="modalCount" class="text-xl font-bold text-blue-600 font-mono mt-1"></div></div>
+             <div><span class="text-xs text-gray-500 uppercase tracking-wider">显示名称</span><div id="modalName" class="font-medium text-gray-800 break-all text-base mt-1"></div></div>
+             <div><span class="text-xs text-gray-500 uppercase tracking-wider">原始 ID</span><div id="modalRawName" class="text-xs font-mono text-gray-600 bg-gray-50 p-2 rounded border border-gray-100 break-all mt-1"></div></div>
+             <div><span class="text-xs text-gray-500 uppercase tracking-wider">今日请求量</span><div id="modalCount" class="text-lg font-bold text-blue-600 font-mono mt-1"></div></div>
            </div>
-           <button onclick="closeModal()" class="w-full py-3 bg-gray-50 text-gray-600 border-t border-gray-100 font-medium hover:bg-gray-100 transition">关闭</button>
+           <button onclick="closeModal()" class="w-full py-2.5 bg-gray-50 text-gray-600 border-t border-gray-100 font-medium hover:bg-gray-100 transition text-sm">关闭</button>
         </div>
       </div>
       ${frontEndScript}
