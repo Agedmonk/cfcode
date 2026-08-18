@@ -1,4 +1,6 @@
-//2026-08-18 1359
+//2026-08-18 1333
+const CURRENT_VERSION = "1.0.202608181350"; // 当前版本号，置于顶部方便随时修改
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -621,6 +623,11 @@ const GLOBAL_STYLE = `
   textarea { width: 100%; height: 350px; background: #1e293b; color: #4ade80; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; padding: 15px; border-radius: 8px; border: none; resize: vertical; outline: none; line-height: 1.5; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  
+  /* 模态弹窗全局共享样式 */
+  .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.5); justify-content: center; align-items: center; z-index: 1000; padding: 15px; backdrop-filter: blur(2px); }
+  .modal.active { display: flex; }
+  .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
 `;
 
 const ICONS = {
@@ -767,23 +774,112 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       </div>
 
       <div class="nav-links" style="align-items: center;">
-        <a href="https://github.com/Agedmonk/cfcode" target="_blank" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 20px; padding: 8px 16px;">获取版本中...</a>
+        <a href="javascript:void(0)" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 8px; padding: 8px 16px;">获取版本中...</a>
         <a href="/dashboard">📋 常用部署面板</a>
         <a href="/logout" class="danger-link">🚪 退出</a>
       </div>
     </div>
   </div>
+
+  <div id="updateModal" class="modal">
+    <div class="modal-content" style="max-width: 320px; text-align: center;">
+      <h3 style="margin-bottom:15px; font-size:16px;">✨ 发现系统新版本</h3>
+      <p id="updateModalText" style="font-size: 13px; color: #475569; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.6;"></p>
+      <div style="display:flex; gap:10px;">
+        <button id="btnConfirmUpdate" class="btn-primary" style="background:#10b981; flex:1;">🚀 更新</button>
+        <button id="btnCancelUpdate" class="btn-danger" style="background:#f1f5f9; color:#475569; flex:1;">忽略</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     (function(){
-      // 获取版本号
+      // 预先拉取账户数据以备自动更新使用
+      let allAccountsForUpdate = [];
+      fetch('/api/accounts').then(res => res.json()).then(data => {
+        if (data.success) allAccountsForUpdate = data.accounts || [];
+      }).catch(err => console.error('账户列表加载失败', err));
+
+      // 获取版本号并对比
       fetch('https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/version.json')
         .then(res => res.json())
         .then(data => {
           const vBtn = document.getElementById('versionBtn');
           if (vBtn && data.version) {
-            vBtn.textContent = 'v' + data.version;
+            const latestVersion = data.version;
+            if (latestVersion !== '${CURRENT_VERSION}') {
+              vBtn.textContent = '🎁 发现新版 v' + latestVersion;
+              vBtn.style.backgroundColor = '#10b981';
+              vBtn.style.color = '#fff';
+              
+              // 绑定呼出弹窗的事件
+              vBtn.addEventListener('click', () => {
+                document.getElementById('updateModalText').innerText = '当前版本: v${CURRENT_VERSION}\\n最新版本: v' + latestVersion;
+                document.getElementById('updateModal').classList.add('active');
+              });
+            } else {
+              vBtn.textContent = 'v${CURRENT_VERSION} (已最新)';
+              vBtn.style.color = '#7f8c8d';
+              vBtn.style.borderColor = '#eaedf1';
+              vBtn.style.cursor = 'default';
+            }
           }
         }).catch(err => console.error('获取版本失败', err));
+
+      // 弹窗：关闭
+      document.getElementById('btnCancelUpdate')?.addEventListener('click', () => {
+        document.getElementById('updateModal').classList.remove('active');
+      });
+
+      // 弹窗：确认更新
+      document.getElementById('btnConfirmUpdate')?.addEventListener('click', async () => {
+        document.getElementById('updateModal').classList.remove('active');
+        const output = document.getElementById('logOutput');
+        output.value = '准备自动更新系统...\\n';
+        
+        // 尝试从列表中找出对应的 AccountID 和 Token
+        const domain = window.location.hostname; // 获取当前网站域名
+        
+        // 匹配逻辑：1. 标识包含当前域名 2. 账号下有名为 'install' 的 worker 3. 实在没有就用第一个
+        let targetAcc = allAccountsForUpdate.find(a => domain.includes(a.identifier) || (a.identifier && a.identifier.includes(domain)));
+        if (!targetAcc) targetAcc = allAccountsForUpdate.find(a => a.workers && a.workers.some(w => w.name === 'install'));
+        if (!targetAcc && allAccountsForUpdate.length > 0) targetAcc = allAccountsForUpdate[0];
+        
+        if (!targetAcc) {
+           output.value += '[错误] 无法定位部署账户，请先在【常用部署】中配置相关 AccountID 及 Token。\\n';
+           return;
+        }
+        
+        // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认 keep
+        let kvName = "";
+        const installWorker = targetAcc.workers ? targetAcc.workers.find(w => w.name === 'install') : null;
+        if (installWorker && installWorker.kvName) kvName = installWorker.kvName;
+        
+        output.value += '[信息] 匹配账户标识: ' + targetAcc.identifier + '\\n';
+        output.value += '[信息] 目标更新项目: install\\n';
+        output.scrollTop = output.scrollHeight;
+
+        const payload = {
+          accountId: targetAcc.accountId,
+          apiToken: targetAcc.token,
+          kvName: kvName,
+          kvAction: 'keep', // KV 保留
+          workerName: 'install',
+          codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
+        };
+
+        try {
+          const res = await fetch('/api/deploy-worker', {
+            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          output.value += (data.logs || []).join('\\n') + '\\n';
+          if (data.success) output.value += '\\n✅ 系统自动更新成功！请稍候刷新页面即可生效。';
+        } catch (err) {
+          output.value += '[错误] ' + err.message + '\\n';
+        }
+        output.scrollTop = output.scrollHeight;
+      });
 
       const kvInput = document.getElementById('kvName'), kvAction = document.getElementById('kvAction');
       kvInput.addEventListener('input', () => kvAction.disabled = !kvInput.value.trim());
@@ -1044,9 +1140,6 @@ function getAccountsPage() {
     .project-detail-info b { color: #334155; font-size: 13px; }
     .project-detail-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: 10px; }
 
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.5); justify-content: center; align-items: center; z-index: 1000; padding: 15px; backdrop-filter: blur(2px); }
-    .modal.active { display: flex; }
-    .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
     .form-group { margin-bottom: 12px; }
     label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; color: #475569; }
     
