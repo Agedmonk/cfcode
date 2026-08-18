@@ -1192,4 +1192,3 @@ function getAccountsPage() {
   </script>
 </body></html>`;
 }
-}
