@@ -1,4 +1,4 @@
-//2026-08-18 1333
+//2026-08-18 1359
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -766,7 +766,8 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         </div>
       </div>
 
-      <div class="nav-links">
+      <div class="nav-links" style="align-items: center;">
+        <a href="https://github.com/Agedmonk/cfcode" target="_blank" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 20px; padding: 8px 16px;">获取版本中...</a>
         <a href="/dashboard">📋 常用部署面板</a>
         <a href="/logout" class="danger-link">🚪 退出</a>
       </div>
@@ -774,6 +775,16 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
   </div>
   <script>
     (function(){
+      // 获取版本号
+      fetch('https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/version.json')
+        .then(res => res.json())
+        .then(data => {
+          const vBtn = document.getElementById('versionBtn');
+          if (vBtn && data.version) {
+            vBtn.textContent = 'v' + data.version;
+          }
+        }).catch(err => console.error('获取版本失败', err));
+
       const kvInput = document.getElementById('kvName'), kvAction = document.getElementById('kvAction');
       kvInput.addEventListener('input', () => kvAction.disabled = !kvInput.value.trim());
 
