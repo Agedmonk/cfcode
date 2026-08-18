@@ -4,12 +4,12 @@ on:
   push:
     branches:
       - main
-    # 忽略 version.json 自身的变动，防止机器人提交后再次触发工作流导致死循环
-    paths-ignore:
-      - 'version.json'
+    paths:
+      # 只有当 JS 文件发生变动时，才触发此工作流
+      - 'install.js'
 
 jobs:
-  update-version:
+  sync-version:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -17,18 +17,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update version.json
+      - name: Extract version and update version.json
         run: |
-          # 设置时区为东八区 (保持与你习惯的北京/新加坡时间一致)
-          export TZ="Asia/Shanghai"
+          # 使用 grep 和正则从 JS 文件中提取 CURRENT_VERSION 的值
+          # 【注意】如果你的 JS 文件名不是 Cloudflare自动部署.js，请修改下方的文件名
+          JS_FILE="Cloudflare自动部署.js"
           
-          # 生成新的版本号，格式：1.0.YYYYMMDDHHMM
-          NEW_VERSION="1.0.$(date +'%Y%m%d%H%M')"
+          if [ ! -f "$JS_FILE" ]; then
+            echo "错误: 找不到文件 $JS_FILE"
+            exit 1
+          fi
+
+          # 提取双引号内的版本号
+          EXTRACTED_VERSION=$(grep -oP 'const CURRENT_VERSION\s*=\s*"\K[^"]+' "$JS_FILE" | head -n 1)
+          
+          if [ -z "$EXTRACTED_VERSION" ]; then
+            echo "错误: 在 $JS_FILE 中找不到 CURRENT_VERSION 定义"
+            exit 1
+          fi
+          
+          echo "成功提取到版本号: $EXTRACTED_VERSION"
           
           # 覆写 version.json
-          echo "{\"version\": \"$NEW_VERSION\"}" > version.json
-          
-          echo "New version generated: $NEW_VERSION"
+          echo "{\"version\": \"$EXTRACTED_VERSION\"}" > version.json
 
       - name: Commit and push changes
         run: |
@@ -38,10 +49,12 @@ jobs:
           
           git add version.json
           
-          # 检查是否有变动，如果有则提交并推送
+          # 检查 version.json 是否真的发生了改变
           if ! git diff --staged --quiet; then
-            git commit -m "chore: install.js的版本号更新为$(grep -oP '(?<="version": ")[^"]*' version.json) [skip ci]"
+            # 使用提取到的版本号作为提交信息
+            git commit -m "chore: 同步install.js版本为 v$EXTRACTED_VERSION"
             git push
+            echo "已将 version.json 更新至 v$EXTRACTED_VERSION 并推送"
           else
-            echo "No changes to commit"
+            echo "版本号未变动，无需提交"
           fi
