@@ -1,4 +1,4 @@
-//2026-08-18 0639
+//2026-08-18 1324
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1052,7 +1052,6 @@ function getAccountsPage() {
         const hideTag = acc.show === false ? ' <span style="color:#ef4444;font-size:12px;font-weight:normal;margin-left:5px;">[隐藏]</span>' : '';
         const disUp = accIdx===0?'disabled':'', disDn = accIdx===accounts.length-1?'disabled':'';
         
-        // 修复：将完整结构拼接为一个字符串再赋值给 innerHTML，避免 div 提前自动闭合
         let htmlStr = '<div class="account-header">' +
           '<div class="account-header-left"><h3>' + escapeHtml(acc.identifier) + hideTag + '</h3></div>' +
           '<div class="account-header-right">' +
@@ -1144,10 +1143,12 @@ function getAccountsPage() {
     /* 编辑弹窗逻辑 */
     function buildDynamicRow(type, name='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
+      
+      // 修复：为下拉框 i-action 增加内联样式：width:75px 和 flex-shrink:0，防止挤占 codeUrl 空间
       div.innerHTML = 
         '<input type="text" class="i-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
         '<input type="text" class="i-kv" placeholder="KV名称" value="' + escapeHtml(kvName) + '">' +
-        '<select class="i-action" ' + (!kvName?'disabled':'') + '><option value="keep" '+(kvAction==='keep'?'selected':'')+'>保留</option><option value="clear" '+(kvAction==='clear'?'selected':'')+'>清空</option></select>' +
+        '<select class="i-action" style="width:75px; flex-shrink:0; padding-left:4px; padding-right:4px;" ' + (!kvName?'disabled':'') + '><option value="keep" '+(kvAction==='keep'?'selected':'')+'>保留</option><option value="clear" '+(kvAction==='clear'?'selected':'')+'>清空</option></select>' +
         '<input type="text" class="i-url" placeholder="代码源/ZIP地址" value="' + escapeHtml(codeUrl) + '">' +
         '<div class="item-actions">' +
           '<label style="display:flex;align-items:center;margin-right:10px;"><input type="checkbox" class="i-show" '+(show!==false?'checked':'')+'> 显示</label>' +
