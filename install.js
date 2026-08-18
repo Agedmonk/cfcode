@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608181730"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181745"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -712,12 +712,11 @@ function getMainPage() {
 			<div class="pwd-toggle" onclick="togglePwd(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></div>
 		  </div>
 	  </div>
+	  <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
       <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
         <div style="flex: 1;"><label>KV 名称（可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
         <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
-      <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
-
       <div class="accordion">
         <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▶</span></div>
         <div id="workerPanel" class="accordion-content">
