@@ -7,6 +7,8 @@ on:
     paths:
       # 只有当 JS 文件发生变动时，才触发此工作流
       - 'install.js'
+  # 加上这一行，允许在 Actions 页面手动点击运行
+  workflow_dispatch: 
 
 jobs:
   sync-version:
@@ -19,9 +21,8 @@ jobs:
 
       - name: Extract version and update version.json
         run: |
-          # 使用 grep 和正则从 JS 文件中提取 CURRENT_VERSION 的值
-          # 【注意】如果你的 JS 文件名不是 Cloudflare自动部署.js，请修改下方的文件名
-          JS_FILE="Cloudflare自动部署.js"
+          # 【这里已帮你修复】指定提取版本号的文件名为 install.js
+          JS_FILE="install.js"
           
           if [ ! -f "$JS_FILE" ]; then
             echo "错误: 找不到文件 $JS_FILE"
