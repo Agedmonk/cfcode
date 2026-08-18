@@ -53,7 +53,7 @@ jobs:
           git add version.json install.zip
           
           if ! git diff --staged --quiet; then
-            git commit -m "chore: 同步版本至 v$EXTRACTED_VERSION 并打包压缩 [skip ci]"
+            git commit -m "已同步版本至 v$EXTRACTED_VERSION 并打包压缩"
             
             # 拉取最新代码防止冲突，然后推送
             git pull --rebase origin main
