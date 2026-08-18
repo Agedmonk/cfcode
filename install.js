@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608181455"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181527"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -627,6 +627,12 @@ const GLOBAL_STYLE = `
   .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.5); justify-content: center; align-items: center; z-index: 1000; padding: 15px; backdrop-filter: blur(2px); }
   .modal.active { display: flex; }
   .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+  
+  /* 密码框开合眼统一样式 */
+  .pwd-wrap { position: relative; display: flex; align-items: center; }
+  .pwd-wrap input { padding-right: 36px !important; }
+  .pwd-toggle { position: absolute; right: 10px; cursor: pointer; color: var(--text-light); display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+  .pwd-toggle:hover { color: var(--primary); }
 `;
 
 const ICONS = {
@@ -635,6 +641,22 @@ const ICONS = {
   edit: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
   del: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
 };
+
+// ==================== 前端共享逻辑 ====================
+const GLOBAL_SCRIPT = `
+  function togglePwd(icon) {
+    const input = icon.previousElementSibling;
+    const eyeOpen = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    const eyeClosed = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.innerHTML = eyeOpen;
+    } else {
+      input.type = 'password';
+      icon.innerHTML = eyeClosed;
+    }
+  }
+`;
 
 // ==================== 登录页面 ====================
 function getLoginPage(errorMsg = "") {
@@ -649,7 +671,12 @@ function getLoginPage(errorMsg = "") {
     <h2><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" style="vertical-align:bottom; margin-right:5px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> 部署工具验证</h2>
     ${errorMsg ? `<div class="error">${errorMsg}</div>` : ''}
     <form method="POST" action="/login">
-      <div class="form-group"><input type="password" name="password" placeholder="请输入系统访问密码" required autofocus></div>
+      <div class="form-group">
+		  <div class="pwd-wrap">
+			<input type="password" name="password" placeholder="请输入系统访问密码" required autofocus>
+			<div class="pwd-toggle" onclick="togglePwd(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></div>
+		  </div>
+	  </div>
       <button class="btn-primary" type="submit">登 录</button>
     </form>
   </div>
@@ -678,7 +705,12 @@ function getMainPage() {
     <div class="card">
       <h2>🚀 Cloudflare 部署工具</h2>
       <div class="form-group"><label>Account ID</label><input type="text" id="accountId" placeholder="例如：8ab2...c8d0"></div>
-      <div class="form-group"><label>API Token</label><input type="password" id="apiToken" placeholder="例如：cfcut_..."></div>
+      <div class="form-group"><label>API Token</label>
+		  <div class="pwd-wrap">
+			<input type="password" id="apiToken" placeholder="例如：cfcut_...">
+			<div class="pwd-toggle" onclick="togglePwd(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></div>
+		  </div>
+	  </div>
       <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
         <div style="flex: 1;"><label>KV 名称（可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
         <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
@@ -1177,7 +1209,12 @@ function getAccountsPage() {
       <h3 id="modalTitle" style="margin-bottom:15px; font-size:16px;">编辑账户</h3>
       <div class="form-group"><label>标识名称</label><input type="text" id="editIdentifier" placeholder="任意自定义名称"></div>
       <div class="form-group"><label>Account ID</label><input type="text" id="editAccountId"></div>
-      <div class="form-group"><label>API Token</label><input type="password" id="editToken"></div>
+      <div class="form-group"><label>API Token</label>
+		  <div class="pwd-wrap">
+			<input type="password" id="editToken">
+			<div class="pwd-toggle" onclick="togglePwd(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></div>
+		  </div>
+	  </div>
       <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="editAccountShow" checked> 在部署页显示此账户</label></div>
       
       <div class="form-group"><label>🚀 Workers 项目</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">➕ 添加 Worker</button></div>
