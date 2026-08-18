@@ -5,21 +5,6 @@ export default {
         throw new Error("KV_DATA 未绑定。请检查 Cloudflare Worker 环境变量配置。");
       }
 
-      // --- 登录密码保护逻辑 ---
-      if (env.ADMIN_PASSWORD) {
-        const authHeader = request.headers.get('Authorization');
-        const expectedAuth = 'Basic ' + btoa('admin:' + env.ADMIN_PASSWORD);
-        if (authHeader !== expectedAuth) {
-          return new Response('需要管理员权限，请输入正确的账号 (admin) 和密码', {
-            status: 401,
-            headers: {
-              'WWW-Authenticate': 'Basic realm="NicholasLai Dashboard"',
-              'Content-Type': 'text/plain;charset=UTF-8'
-            }
-          });
-        }
-      }
-
       const url = new URL(request.url);
       let path = url.pathname;
       if (path.length > 1 && path.endsWith('/')) {
@@ -37,17 +22,15 @@ export default {
       if (segments.length === 2) {
         const route = segments[1];
         if (route === 'setting') {
+          // --- 新增：处理备份与导入导出相关的 API 动作 ---
           const action = url.searchParams.get('action');
-          // 处理 POST 动作
-          if (request.method === 'POST') {
-            if (action === 'backup') return await handleBackupConfig(env);
-            if (action === 'restore') return await handleRestoreConfig(request, env);
-            if (action === 'import') return await handleImportConfig(request, env);
-            return await handleSaveSettings(request, env);
-          }
-          // 处理 GET 动作
-          if (action === 'export') return await handleExportConfig(env);
-          if (action === 'list_backups') return await handleListBackups(env);
+          if (action === 'backup' && request.method === 'POST') return await handleBackupSettings(env);
+          if (action === 'list_backups' && request.method === 'GET') return await handleListBackups(env);
+          if (action === 'restore' && request.method === 'POST') return await handleRestoreSettings(request, env);
+          if (action === 'export' && request.method === 'GET') return await handleExportSettings(env);
+          if (action === 'import' && request.method === 'POST') return await handleImportSettings(request, env);
+          
+          if (request.method === 'POST') return await handleSaveSettings(request, env);
           return await handleSettingPage(env);
         }
         if (route === 'api') return await handleGlobalApi(env);
@@ -65,6 +48,58 @@ export default {
     }
   }
 };
+
+// ==================== 数据备份与导入导出功能 ====================
+async function handleBackupSettings(env) {
+  const data = await env.KV_DATA.get('WORKER_CONFIG');
+  if (!data) return new Response(JSON.stringify({ error: '没有需要备份的数据' }), { status: 400 });
+  
+  // 生成东八区时间作为后缀
+  const tzOffset = 8 * 60 * 60 * 1000;
+  const localDate = new Date(Date.now() + tzOffset);
+  const timeStr = localDate.toISOString().replace('T', '_').replace(/:/g, '-').split('.')[0];
+  const key = `backup_${timeStr}`;
+  
+  await env.KV_DATA.put(key, data);
+  return new Response(JSON.stringify({ success: true, key }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handleListBackups(env) {
+  const list = await env.KV_DATA.list({ prefix: 'backup_' });
+  const keys = list.keys.map(k => k.name).sort().reverse();
+  return new Response(JSON.stringify({ success: true, backups: keys }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handleRestoreSettings(request, env) {
+  const { key } = await request.json();
+  if (!key) return new Response(JSON.stringify({ error: '缺少备份键名' }), { status: 400 });
+  const data = await env.KV_DATA.get(key);
+  if (!data) return new Response(JSON.stringify({ error: '找不到对应的备份' }), { status: 404 });
+  
+  await env.KV_DATA.put('WORKER_CONFIG', data);
+  return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function handleExportSettings(env) {
+  const data = await env.KV_DATA.get('WORKER_CONFIG') || '[]';
+  return new Response(data, {
+    headers: {
+      'Content-Type': 'application/json;charset=UTF-8',
+      'Content-Disposition': 'attachment; filename="cloudflare_accounts_backup.json"'
+    }
+  });
+}
+
+async function handleImportSettings(request, env) {
+  try {
+    const data = await request.json();
+    if (!Array.isArray(data)) throw new Error("无效的格式");
+    await env.KV_DATA.put('WORKER_CONFIG', JSON.stringify(data));
+    return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: '解析 JSON 失败或格式错误' }), { status: 400 });
+  }
+}
 
 // ==================== 工具函数 ====================
 function getMainDomainUrl(hostname) {
@@ -570,7 +605,7 @@ function buildPageLayout(title, contentHtml, isSubPage = false) {
 // --- API 处理逻辑 ---
 async function handleGlobalApi(env) {
   const configData = JSON.parse(await env.KV_DATA.get('WORKER_CONFIG') || '[]');
-  const visibleData = configData.filter(c => c.showOnHome !== false); // API 也只返回允许显示的节点
+  const visibleData = configData.filter(c => c.showOnHome !== false); 
   const quota = 100000;
   
   const results = await Promise.all(visibleData.map(async (item) => {
@@ -605,7 +640,6 @@ async function handleSpecificApi(env, targetTag) {
 // --- 主页逻辑 ---
 async function handleDisplayPage(env) {
   const configData = JSON.parse(await env.KV_DATA.get('WORKER_CONFIG') || '[]');
-  // 过滤并按序渲染主页显示的节点
   const displayData = configData.filter(item => item.showOnHome !== false);
   
   if (displayData.length === 0) {
@@ -674,7 +708,7 @@ async function handleSpecificDisplayPage(env, targetTag, hostname) {
   return new Response(html, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
 
-// --- 设置页逻辑（图片风格 UI + 上下箭头排序 + 密码可见功能） ---
+// --- 设置页逻辑 ---
 async function handleSettingPage(env) {
   let data = JSON.parse(await env.KV_DATA.get('WORKER_CONFIG') || '[]');
   if(data.length === 0) data.push({ id: generateId(), tag: '', userId: '', apiKey: '', showOnHome: true, aliases: {} });
@@ -724,33 +758,21 @@ async function handleSettingPage(env) {
 
     return `
       <div class="node-card bg-white rounded-lg border border-gray-100 mb-3 group relative" data-id="${item.id || generateId()}">
-        
-        <!-- 卡片头部：清爽单行风格 -->
         <div class="cursor-pointer flex justify-between items-center p-4 hover:bg-gray-50 transition node-header" onclick="toggleNode(this)">
           <div class="flex items-center space-x-2 w-1/2 overflow-hidden">
             <span class="node-title-display text-sm font-medium text-gray-700 truncate">${tagDisplay}</span>
             <span class="text-red-500 text-xs hidden-label flex-shrink-0 ${isShow ? 'hidden' : ''}">[隐藏]</span>
           </div>
           
-          <!-- 右侧图标操作区 -->
           <div class="flex items-center space-x-3 text-gray-400" onclick="event.stopPropagation()">
-            <button type="button" class="hover:text-gray-700 transition" onclick="moveUp(this)" title="向上移动">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
-            </button>
-            <button type="button" class="hover:text-gray-700 transition" onclick="moveDown(this)" title="向下移动">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
-            </button>
-            <button type="button" class="hover:text-orange-500 transition" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" title="编辑">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-            </button>
-            <button type="button" class="hover:text-red-500 text-red-400 transition" onclick="removeNode(this)" title="删除">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-            </button>
+            <button type="button" class="hover:text-gray-700 transition" onclick="moveUp(this)" title="向上移动"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg></button>
+            <button type="button" class="hover:text-gray-700 transition" onclick="moveDown(this)" title="向下移动"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></button>
+            <button type="button" class="hover:text-orange-500 transition" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" title="编辑"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>
+            <button type="button" class="hover:text-red-500 text-red-400 transition" onclick="removeNode(this)" title="删除"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
             <svg class="w-4 h-4 transition-transform duration-200 chevron-icon cursor-pointer" onclick="toggleNode(this.closest('.node-card').querySelector('.node-header'))" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
           </div>
         </div>
         
-        <!-- 账号详细配置区：默认隐藏 -->
         <div class="node-content hidden p-5 bg-gray-50/50 border-t border-gray-100">
           <label class="flex items-center space-x-1.5 text-sm font-medium text-gray-600 mb-4 cursor-pointer select-none">
             <input type="checkbox" class="show-on-home-checkbox w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer" ${isShow ? 'checked' : ''} onchange="updateHiddenLabel(this)">
@@ -760,18 +782,15 @@ async function handleSettingPage(env) {
           <div class="space-y-3 mb-5">
             <input type="text" name="tag" value="${item.tag}" placeholder="网页标签名称 (如 niclai.vip)" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm shadow-sm" oninput="updateNodeTitle(this)" />
             <input type="text" name="userId" value="${item.userId}" placeholder="Cloudflare 账号 ID" class="w-full px-4 py-2.5 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
-            
-            <!-- 带眼睛切换的密码框 -->
             <div class="relative w-full">
               <input type="password" name="apiKey" value="${item.apiKey}" placeholder="API 令牌 (需 Read 权限)" class="w-full px-4 py-2.5 pr-10 rounded-lg bg-white border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none transition text-sm font-mono shadow-sm" />
-              <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)" title="显示/隐藏">
+              <button type="button" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-blue-500 transition focus:outline-none" onclick="togglePassword(this)">
                 <svg class="w-5 h-5 eye-closed" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
                 <svg class="w-5 h-5 eye-open hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.543 7-1.274 4.057-5.064 7-9.543 7-4.477 0-8.268-2.943-9.543-7z"></path></svg>
               </button>
             </div>
           </div>
 
-          <!-- 别名配置区：点击可展开/折叠 -->
           <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
             <div class="px-4 py-3 cursor-pointer flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition alias-header" onclick="toggleAlias(this)">
               <h4 class="text-xs font-bold text-gray-600 flex items-center gap-1">🏷️ 项目别名配置</h4>
@@ -795,7 +814,6 @@ async function handleSettingPage(env) {
       <title>账户与配置管理</title>
       <script src="https://cdn.tailwindcss.com"></script>
       <style>
-        /* 使用更现代、清爽的无衬线中文字体替换默认字体 */
         body {
           font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft YaHei", Tahoma, Simsun, sans-serif;
           background-color: #f1f5f9;
@@ -804,53 +822,62 @@ async function handleSettingPage(env) {
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        /* 避免动画导致文字模糊 */
         .node-card { transform: translateZ(0); }
       </style>
     </head>
     <body class="min-h-screen py-8 px-4 flex justify-center items-start">
       <div class="w-full max-w-4xl bg-white rounded-xl shadow-sm border border-gray-200 p-6 md:p-8">
         
-        <!-- 头部标题 -->
         <h1 class="text-xl md:text-2xl font-bold text-gray-800 tracking-wide mb-8 flex justify-center items-center gap-3">
           <svg class="w-7 h-7 text-indigo-800" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"></path></svg>
           账户与配置管理
         </h1>
+
+        <!-- 注入：数据备份与迁移模块 -->
+        <div class="mb-8 p-5 bg-white rounded-xl shadow-sm border border-gray-200">
+          <h2 class="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+            数据备份与迁移
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 备份/恢复 -->
+            <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between">
+               <div class="text-sm text-gray-600 mb-3">将当前所有账号配置保存至云端(KV)，或从云端记录覆盖恢复。</div>
+               <div class="flex flex-col gap-2">
+                 <button type="button" onclick="createBackup()" class="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded transition shadow-sm">☁️ 立即备份当前配置</button>
+                 <div class="flex gap-2">
+                   <select id="backup-list" class="flex-1 px-2 py-1.5 text-xs bg-white border border-gray-300 rounded outline-none focus:border-blue-500">
+                     <option value="">加载备份列表中...</option>
+                   </select>
+                   <button type="button" onclick="restoreBackup()" class="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white text-xs font-medium rounded transition">恢复</button>
+                 </div>
+               </div>
+            </div>
+            <!-- 导入/导出 -->
+            <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between">
+               <div class="text-sm text-gray-600 mb-3">导出配置文件到本地备份，或上传 JSON 配置文件以进行恢复。</div>
+               <div class="flex flex-col gap-2">
+                 <a href="/NicholasLai/setting?action=export" download="cloudflare_accounts_backup.json" class="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-center text-sm font-medium rounded transition shadow-sm inline-block">📥 导出配置到本地</a>
+                 <label class="w-full py-2 bg-orange-500 hover:bg-orange-600 text-white text-center text-sm font-medium rounded transition shadow-sm cursor-pointer block">
+                   <input type="file" accept=".json" class="hidden" onchange="importFile(event)">
+                   📤 从本地文件导入
+                 </label>
+               </div>
+            </div>
+          </div>
+        </div>
+        <!-- 结束：数据备份与迁移模块 -->
         
         <form id="settings-form">
-          <!-- 新增：控制栏 (备份/恢复/导出/导入) -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <button type="button" onclick="executeBackup()" class="w-full bg-[#10b981] hover:bg-[#059669] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-              备份配置
-            </button>
-            <button type="button" onclick="openRestoreModal()" class="w-full bg-[#f59e0b] hover:bg-[#d97706] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-              恢复配置
-            </button>
-            <a href="/NicholasLai/setting?action=export" class="w-full bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-              导出全部
-            </a>
-            <button type="button" onclick="document.getElementById('import-file').click()" class="w-full bg-[#3b82f6] hover:bg-[#2563eb] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-              导入配置
-            </button>
-            <!-- 隐藏的导入文件域 -->
-            <input type="file" id="import-file" class="hidden" accept=".json" onchange="executeImport(event)">
-          </div>
-
           <div id="node-list" class="space-y-3">
             ${cardsHtml}
           </div>
           
-          <!-- 大号橘色添加按钮 -->
           <button type="button" id="add-node-btn" class="w-full bg-[#f97316] hover:bg-[#ea580c] text-white font-bold py-3.5 rounded-lg shadow-sm transition-colors mt-4 flex justify-center items-center gap-1">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
             添加新账户
           </button>
           
-          <!-- 底部小号操作按钮 -->
           <div class="flex justify-center items-center gap-4 mt-8 pt-6 border-t border-gray-100">
             <button type="submit" id="save-btn" class="px-5 py-2 bg-white border border-gray-200 rounded-md text-gray-600 text-sm hover:bg-gray-50 flex items-center gap-2 shadow-sm transition focus:outline-none">
               <span class="text-gray-400">📄</span> 保存并应用
@@ -862,7 +889,6 @@ async function handleSettingPage(env) {
         </form>
       </div>
 
-      <!-- 新增节点时的模板 -->
       <template id="node-template">
         <div class="node-card bg-white rounded-lg border border-gray-100 mb-3 group relative" data-id="">
           <div class="cursor-pointer flex justify-between items-center p-4 hover:bg-gray-50 transition node-header" onclick="toggleNode(this)">
@@ -901,64 +927,40 @@ async function handleSettingPage(env) {
           </div>
         </div>
       </template>
-	<!-- 恢复配置弹窗 -->
-      <div id="restoreModal" class="fixed inset-0 z-50 hidden bg-gray-900 bg-opacity-40 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden">
-           <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-             <h3 class="text-base font-bold text-gray-700 flex items-center gap-2">⏪ 选择恢复时间点</h3>
-             <button onclick="closeRestoreModal()" class="text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded p-1 transition">
-               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-             </button>
-           </div>
-           <div class="p-4">
-             <select id="backup-select" class="w-full px-3 py-2 rounded-md border border-gray-300 focus:ring-blue-500 outline-none text-sm bg-white mb-4">
-               <option value="">加载中...</option>
-             </select>
-             <button onclick="executeRestore()" class="w-full bg-[#f97316] hover:bg-[#ea580c] text-white font-medium py-2.5 rounded shadow-sm transition text-sm">确认恢复并覆盖当前配置</button>
-           </div>
-        </div>
-      </div>
-      <script>
-	  // --- 备份/恢复/导入 交互逻辑 ---
-        async function executeBackup() {
-          if(!confirm('确定要在 KV 内备份当前的配置数据吗？')) return;
-          try {
-            const res = await fetch('/NicholasLai/setting?action=backup', { method: 'POST' });
-            const data = await res.json();
-            if(data.code === 200) alert('✅ ' + data.message + '\\n备份名称: ' + data.key);
-            else alert('备份失败: ' + data.message);
-          } catch(e) { alert('请求异常'); }
-        }
 
-        async function openRestoreModal() {
-          document.getElementById('restoreModal').classList.remove('hidden');
-          const select = document.getElementById('backup-select');
-          select.innerHTML = '<option value="">获取备份列表中...</option>';
+      <script>
+        // --- 备份与导入导出相关功能 ---
+        async function loadBackups() {
+          const select = document.getElementById('backup-list');
           try {
             const res = await fetch('/NicholasLai/setting?action=list_backups');
             const data = await res.json();
-            if (data.code === 200 && data.data.length > 0) {
-              select.innerHTML = data.data.map(k => {
-                // 将 backup_20260818_181005 格式化显示
-                const formatName = k.replace('backup_', '').replace(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
-                return `<option value="${k}">时间: ${formatName}</option>`;
-              }).join('');
+            if (data.success && data.backups.length > 0) {
+              select.innerHTML = '<option value="">-- 请选择要恢复的备份 --</option>' + 
+                data.backups.map(b => '<option value="' + b + '">' + b.replace('backup_', '') + '</option>').join('');
             } else {
-              select.innerHTML = '<option value="">暂无可用备份</option>';
+              select.innerHTML = '<option value="">暂无云端备份</option>';
             }
-          } catch(e) {
-            select.innerHTML = '<option value="">获取失败</option>';
+          } catch (e) {
+            select.innerHTML = '<option value="">加载失败</option>';
           }
         }
 
-        function closeRestoreModal() {
-          document.getElementById('restoreModal').classList.add('hidden');
+        async function createBackup() {
+          if(!confirm('确定要将当前的配置信息备份到云端(KV)吗？')) return;
+          try {
+            const res = await fetch('/NicholasLai/setting?action=backup', { method: 'POST' });
+            if (res.ok) {
+              alert('备份成功！');
+              loadBackups(); // 刷新列表
+            } else alert('备份失败，请检查网络或 KV 绑定');
+          } catch(e) { alert('请求异常'); }
         }
 
-        async function executeRestore() {
-          const key = document.getElementById('backup-select').value;
-          if(!key) return alert('请先选择一个备份文件');
-          if(!confirm('⚠️ 警告：恢复操作将完全覆盖当前所有配置且无法撤销！确定继续吗？')) return;
+        async function restoreBackup() {
+          const key = document.getElementById('backup-list').value;
+          if(!key) return alert('请先选择一个历史备份');
+          if(!confirm('【警告】从云端恢复将覆盖当前的全部配置数据！是否继续？')) return;
           
           try {
             const res = await fetch('/NicholasLai/setting?action=restore', {
@@ -966,42 +968,49 @@ async function handleSettingPage(env) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ key })
             });
-            const data = await res.json();
-            if (data.code === 200) {
-              alert('✅ 恢复成功！即将刷新页面');
+            if(res.ok) {
+              alert('恢复成功！页面将自动刷新。');
               location.reload();
-            } else alert('恢复失败: ' + data.message);
+            } else alert('恢复失败');
           } catch(e) { alert('请求异常'); }
         }
 
-        function executeImport(event) {
+        async function importFile(event) {
           const file = event.target.files[0];
-          if (!file) return;
-          if(!confirm('⚠️ 警告：导入的数据将完全覆盖当前所有配置！确定继续吗？')) {
-            event.target.value = ''; // 取消则清空选择
+          if(!file) return;
+          if(!confirm('【警告】导入本地文件将覆盖当前的全部配置数据！是否继续？')) {
+            event.target.value = ''; // 清空选择
             return;
           }
           
           const reader = new FileReader();
-          reader.onload = async (e) => {
-            const content = e.target.result;
+          reader.onload = async function(e) {
             try {
+              const content = JSON.parse(e.target.result);
               const res = await fetch('/NicholasLai/setting?action=import', {
                 method: 'POST',
-                body: content
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(content)
               });
-              const data = await res.json();
-              if (data.code === 200) {
-                alert('✅ 导入成功！即将刷新页面');
+              
+              if(res.ok) {
+                alert('导入成功！页面将自动刷新。');
                 location.reload();
-              } else alert('导入失败: ' + data.message);
-            } catch(err) { alert('请求异常'); }
+              } else {
+                alert('导入失败，请检查文件内容是否正确。');
+              }
+            } catch(err) {
+              alert('文件解析失败，请确保上传的是有效的 JSON 配置文件。');
+            }
+            event.target.value = '';
           };
           reader.readAsText(file);
-          event.target.value = ''; // 执行完毕清空
         }
-		
-        // 上下箭头排序功能
+
+        // 初始化加载备份列表
+        loadBackups();
+
+        // --- 界面交互相关功能 ---
         function moveUp(btn) {
           const current = btn.closest('.node-card');
           const prev = current.previousElementSibling;
@@ -1018,7 +1027,6 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 密码框开合眼切换
         function togglePassword(btn) {
           const container = btn.closest('.relative');
           const input = container.querySelector('input[name="apiKey"]');
@@ -1036,14 +1044,12 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 删除节点
         function removeNode(btn) {
           const card = btn.closest('.node-card');
           card.style.opacity = '0';
           setTimeout(() => card.remove(), 200);
         }
 
-        // 账号层级的展开折叠
         function toggleNode(headerElement) {
           const content = headerElement.nextElementSibling;
           const icon = headerElement.querySelector('.chevron-icon');
@@ -1056,7 +1062,6 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 别名层级的展开折叠
         function toggleAlias(headerElement) {
           const content = headerElement.nextElementSibling;
           const icon = headerElement.querySelector('.alias-chevron');
@@ -1069,7 +1074,6 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 实时更新头部标题
         function updateNodeTitle(inputElement) {
           const titleSpan = inputElement.closest('.node-card').querySelector('.node-title-display');
           if (titleSpan) {
@@ -1077,7 +1081,6 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 动态更新隐藏标签
         function updateHiddenLabel(checkbox) {
           const label = checkbox.closest('.node-card').querySelector('.hidden-label');
           if (checkbox.checked) {
@@ -1087,7 +1090,6 @@ async function handleSettingPage(env) {
           }
         }
 
-        // 新增节点
         document.getElementById('add-node-btn').addEventListener('click', () => {
           const template = document.getElementById('node-template').content.cloneNode(true);
           const newCard = template.querySelector('.node-card');
@@ -1095,7 +1097,6 @@ async function handleSettingPage(env) {
           document.getElementById('node-list').appendChild(newCard);
         });
 
-        // 保存配置
         document.getElementById('settings-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = document.getElementById('save-btn');
@@ -1143,63 +1144,7 @@ async function handleSettingPage(env) {
 }
 
 async function handleSaveSettings(request, env) {
-  // 修改为接受纯 JSON 格式数据
   const newData = await request.json();
   await env.KV_DATA.put('WORKER_CONFIG', JSON.stringify(newData));
   return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
-}
-
-// ==================== 数据管理与备份恢复 ====================
-async function handleBackupConfig(env) {
-  const data = await env.KV_DATA.get('WORKER_CONFIG');
-  if (!data) return new Response(JSON.stringify({ code: 400, message: '没有可备份的数据' }));
-  
-  // 生成东八区时间，格式：backup_20260818_181005
-  const tzOffset = 8 * 60 * 60 * 1000;
-  const now = new Date(Date.now() + tzOffset);
-  const timeStr = now.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/[-:]/g, '');
-  const backupKey = `backup_${timeStr}`;
-  
-  await env.KV_DATA.put(backupKey, data);
-  return new Response(JSON.stringify({ code: 200, message: '备份成功', key: backupKey }));
-}
-
-async function handleListBackups(env) {
-  const list = await env.KV_DATA.list({ prefix: 'backup_' });
-  // 按照时间倒序排列（最新备份在最上）
-  const keys = list.keys.map(k => k.name).sort().reverse();
-  return new Response(JSON.stringify({ code: 200, data: keys }));
-}
-
-async function handleRestoreConfig(request, env) {
-  const { key } = await request.json();
-  if (!key) return new Response(JSON.stringify({ code: 400, message: '缺少备份键名' }));
-  
-  const data = await env.KV_DATA.get(key);
-  if (!data) return new Response(JSON.stringify({ code: 404, message: '备份不存在' }));
-  
-  await env.KV_DATA.put('WORKER_CONFIG', data);
-  return new Response(JSON.stringify({ code: 200, message: '恢复成功' }));
-}
-
-async function handleExportConfig(env) {
-  const data = await env.KV_DATA.get('WORKER_CONFIG') || '[]';
-  return new Response(data, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Disposition': `attachment; filename="cloudflare_dashboard_export_${Date.now()}.json"`
-    }
-  });
-}
-
-async function handleImportConfig(request, env) {
-  try {
-    const data = await request.text();
-    // 校验 JSON 格式
-    JSON.parse(data);
-    await env.KV_DATA.put('WORKER_CONFIG', data);
-    return new Response(JSON.stringify({ code: 200, message: '导入成功' }));
-  } catch(e) {
-    return new Response(JSON.stringify({ code: 400, message: '导入的数据格式错误' }));
-  }
 }
