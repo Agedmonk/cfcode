@@ -1,4 +1,4 @@
-//2026-08-18 1255
+//2026-08-18 0639
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -589,13 +589,18 @@ const GLOBAL_STYLE = `
   .container { width: 100%; max-width: 950px; }
   .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 25px; }
   h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #1e293b; text-align: center; }
-  input, select {
+  
+  /* 修复: 只针对非 checkbox 类型的输入框应用 100% 宽度 */
+  input:not([type="checkbox"]):not([type="file"]), select {
     width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
     outline: none; transition: border-color 0.2s, box-shadow 0.2s; background: #fafbfc;
   }
-  input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243, 128, 32, 0.1); background: #fff; }
+  input:not([type="checkbox"]):not([type="file"]):focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243, 128, 32, 0.1); background: #fff; }
   select:disabled { background: #f1f2f6; color: #a4b0be; cursor: not-allowed; }
-  input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; transform: scale(1.1); margin-right: 6px; }
+  
+  /* 修复: 为 checkbox 设置自适应宽度，确保能正常同行显示 */
+  input[type="checkbox"] { width: auto; accent-color: var(--primary); cursor: pointer; transform: scale(1.1); margin-right: 6px; padding: 0; }
+  
   button { 
     border: none; border-radius: var(--btn-radius); cursor: pointer; font-size: 14px; font-weight: 500; 
     transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -805,7 +810,7 @@ function getDashboardPage() {
         accDiv.className = 'account-item';
         accDiv.innerHTML = 
           '<div class="account-header" data-acc-index="' + accIndex + '">' +
-            '<div><input type="checkbox" class="account-checkbox" data-acc-index="' + accIndex + '"><span class="account-name">' + escapeHtml(account.identifier) + '</span></div>' +
+            '<div style="display:flex; align-items:center;"><input type="checkbox" class="account-checkbox" data-acc-index="' + accIndex + '"><span class="account-name">' + escapeHtml(account.identifier) + '</span></div>' +
             '<span class="arrow" style="color:#94a3b8; font-size:12px;">▼</span>' +
           '</div>' +
           '<div class="project-list">' +
@@ -940,9 +945,9 @@ function getAccountsPage() {
     .account-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 15px; background: #fff; overflow: hidden; }
     .account-header { background: #fafbfc; padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: 0.2s; }
     .account-header:hover { background: #f1f2f6; }
-    .account-header-left { flex: 1; min-width: 0; }
-    .account-header-left h3 { font-size: 15px; font-weight: 600; margin: 0; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .account-header-right { display: flex; gap: 4px; flex-shrink: 0; }
+    .account-header-left { flex: 1; min-width: 0; display: flex; align-items: center; }
+    .account-header-left h3 { font-size: 15px; font-weight: 600; margin: 0; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+    .account-header-right { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
     
     .project-list { display: none; padding: 15px; border-top: 1px solid var(--border); }
     .project-list.active { display: block; }
@@ -1044,16 +1049,18 @@ function getAccountsPage() {
       
       accounts.forEach((acc, accIdx) => {
         const div = document.createElement('div'); div.className = 'account-item';
-        const hideTag = acc.show === false ? ' <span style="color:#ef4444;font-size:12px;font-weight:normal;">[隐藏]</span>' : '';
+        const hideTag = acc.show === false ? ' <span style="color:#ef4444;font-size:12px;font-weight:normal;margin-left:5px;">[隐藏]</span>' : '';
         const disUp = accIdx===0?'disabled':'', disDn = accIdx===accounts.length-1?'disabled':'';
         
-        div.innerHTML = '<div class="account-header">' +
+        // 修复：将完整结构拼接为一个字符串再赋值给 innerHTML，避免 div 提前自动闭合
+        let htmlStr = '<div class="account-header">' +
           '<div class="account-header-left"><h3>' + escapeHtml(acc.identifier) + hideTag + '</h3></div>' +
           '<div class="account-header-right">' +
             '<button class="btn-icon move-acc-up" ' + disUp + ' data-idx="' + accIdx + '">' + ICONS.up + '</button>' +
             '<button class="btn-icon move-acc-down" ' + disDn + ' data-idx="' + accIdx + '">' + ICONS.down + '</button>' +
             '<button class="btn-icon edit-btn" data-id="' + escapeHtml(acc.identifier) + '" style="color:var(--primary)">' + ICONS.edit + '</button>' +
             '<button class="btn-icon delete-btn" data-id="' + escapeHtml(acc.identifier) + '" style="color:#ef4444">' + ICONS.del + '</button>' +
+            '<span class="arrow" style="color:#94a3b8; font-size:12px; margin-left:8px;">▼</span>' +
           '</div></div><div class="project-list">';
         
         let pListHTML = '';
@@ -1071,17 +1078,22 @@ function getAccountsPage() {
               '</div></div>';
           }); return h;
         };
+        
         pListHTML += renderProj(acc.workers, '🚀 Workers', 'workers');
         pListHTML += renderProj(acc.pages, '📄 Pages', 'pages');
         if(!pListHTML) pListHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center;">暂无项目</div>';
         
-        div.innerHTML += pListHTML + '</div>';
+        htmlStr += pListHTML + '</div>';
+        div.innerHTML = htmlStr;
         container.appendChild(div);
       });
 
       document.querySelectorAll('.account-header').forEach(h => h.addEventListener('click', function(e){
         if (e.target.closest('button')) return;
-        this.nextElementSibling.classList.toggle('active');
+        const list = this.nextElementSibling;
+        list.classList.toggle('active');
+        const arrow = this.querySelector('.arrow');
+        if (arrow) arrow.textContent = list.classList.contains('active') ? '▲' : '▼';
       }));
       document.querySelectorAll('.move-acc-up').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if(moveArrItem(accounts, parseInt(b.dataset.idx), -1)) saveAccountsOrder(); }));
       document.querySelectorAll('.move-acc-down').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if(moveArrItem(accounts, parseInt(b.dataset.idx), 1)) saveAccountsOrder(); }));
