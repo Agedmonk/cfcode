@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608181536"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181730"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -1133,7 +1133,7 @@ function getDashboardPage() {
       btn.disabled = true; output.value = '开始批量部署...\\n';
       for (let i = 0; i < selected.length; i++) {
         const item = selected[i];
-        output.value += '\\n[' + (i+1) + '/' + selected.length + '] ' + item.account.identifier + ' -> ' + item.proj.name + '\\n';
+        output.value += '\\n[' + (i+1) + '/' + selected.length + '] ' + item.account.identifier + ' <- ' + item.proj.name + '\\n';
         output.scrollTop = output.scrollHeight;
         try {
           const payload = { type: item.type, id: item.account.accountId, token: item.account.token, kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', name: item.proj.name, source: item.proj.codeUrl || 'default' };
