@@ -5,6 +5,21 @@ export default {
         throw new Error("KV_DATA 未绑定。请检查 Cloudflare Worker 环境变量配置。");
       }
 
+      // --- 登录密码保护逻辑 ---
+      if (env.ADMIN_PASSWORD) {
+        const authHeader = request.headers.get('Authorization');
+        const expectedAuth = 'Basic ' + btoa('admin:' + env.ADMIN_PASSWORD);
+        if (authHeader !== expectedAuth) {
+          return new Response('需要管理员权限，请输入正确的账号 (admin) 和密码', {
+            status: 401,
+            headers: {
+              'WWW-Authenticate': 'Basic realm="NicholasLai Dashboard"',
+              'Content-Type': 'text/plain;charset=UTF-8'
+            }
+          });
+        }
+      }
+
       const url = new URL(request.url);
       let path = url.pathname;
       if (path.length > 1 && path.endsWith('/')) {
@@ -22,7 +37,17 @@ export default {
       if (segments.length === 2) {
         const route = segments[1];
         if (route === 'setting') {
-          if (request.method === 'POST') return await handleSaveSettings(request, env);
+          const action = url.searchParams.get('action');
+          // 处理 POST 动作
+          if (request.method === 'POST') {
+            if (action === 'backup') return await handleBackupConfig(env);
+            if (action === 'restore') return await handleRestoreConfig(request, env);
+            if (action === 'import') return await handleImportConfig(request, env);
+            return await handleSaveSettings(request, env);
+          }
+          // 处理 GET 动作
+          if (action === 'export') return await handleExportConfig(env);
+          if (action === 'list_backups') return await handleListBackups(env);
           return await handleSettingPage(env);
         }
         if (route === 'api') return await handleGlobalApi(env);
@@ -793,6 +818,28 @@ async function handleSettingPage(env) {
         </h1>
         
         <form id="settings-form">
+          <!-- 新增：控制栏 (备份/恢复/导出/导入) -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <button type="button" onclick="executeBackup()" class="w-full bg-[#10b981] hover:bg-[#059669] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+              备份配置
+            </button>
+            <button type="button" onclick="openRestoreModal()" class="w-full bg-[#f59e0b] hover:bg-[#d97706] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+              恢复配置
+            </button>
+            <a href="/NicholasLai/setting?action=export" class="w-full bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+              导出全部
+            </a>
+            <button type="button" onclick="document.getElementById('import-file').click()" class="w-full bg-[#3b82f6] hover:bg-[#2563eb] text-white font-medium py-2 rounded-md shadow-sm transition flex justify-center items-center gap-1.5 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              导入配置
+            </button>
+            <!-- 隐藏的导入文件域 -->
+            <input type="file" id="import-file" class="hidden" accept=".json" onchange="executeImport(event)">
+          </div>
+
           <div id="node-list" class="space-y-3">
             ${cardsHtml}
           </div>
@@ -854,8 +901,106 @@ async function handleSettingPage(env) {
           </div>
         </div>
       </template>
-
+	<!-- 恢复配置弹窗 -->
+      <div id="restoreModal" class="fixed inset-0 z-50 hidden bg-gray-900 bg-opacity-40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden">
+           <div class="px-5 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+             <h3 class="text-base font-bold text-gray-700 flex items-center gap-2">⏪ 选择恢复时间点</h3>
+             <button onclick="closeRestoreModal()" class="text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded p-1 transition">
+               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+             </button>
+           </div>
+           <div class="p-4">
+             <select id="backup-select" class="w-full px-3 py-2 rounded-md border border-gray-300 focus:ring-blue-500 outline-none text-sm bg-white mb-4">
+               <option value="">加载中...</option>
+             </select>
+             <button onclick="executeRestore()" class="w-full bg-[#f97316] hover:bg-[#ea580c] text-white font-medium py-2.5 rounded shadow-sm transition text-sm">确认恢复并覆盖当前配置</button>
+           </div>
+        </div>
+      </div>
       <script>
+	  // --- 备份/恢复/导入 交互逻辑 ---
+        async function executeBackup() {
+          if(!confirm('确定要在 KV 内备份当前的配置数据吗？')) return;
+          try {
+            const res = await fetch('/NicholasLai/setting?action=backup', { method: 'POST' });
+            const data = await res.json();
+            if(data.code === 200) alert('✅ ' + data.message + '\\n备份名称: ' + data.key);
+            else alert('备份失败: ' + data.message);
+          } catch(e) { alert('请求异常'); }
+        }
+
+        async function openRestoreModal() {
+          document.getElementById('restoreModal').classList.remove('hidden');
+          const select = document.getElementById('backup-select');
+          select.innerHTML = '<option value="">获取备份列表中...</option>';
+          try {
+            const res = await fetch('/NicholasLai/setting?action=list_backups');
+            const data = await res.json();
+            if (data.code === 200 && data.data.length > 0) {
+              select.innerHTML = data.data.map(k => {
+                // 将 backup_20260818_181005 格式化显示
+                const formatName = k.replace('backup_', '').replace(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/, '$1-$2-$3 $4:$5:$6');
+                return `<option value="${k}">时间: ${formatName}</option>`;
+              }).join('');
+            } else {
+              select.innerHTML = '<option value="">暂无可用备份</option>';
+            }
+          } catch(e) {
+            select.innerHTML = '<option value="">获取失败</option>';
+          }
+        }
+
+        function closeRestoreModal() {
+          document.getElementById('restoreModal').classList.add('hidden');
+        }
+
+        async function executeRestore() {
+          const key = document.getElementById('backup-select').value;
+          if(!key) return alert('请先选择一个备份文件');
+          if(!confirm('⚠️ 警告：恢复操作将完全覆盖当前所有配置且无法撤销！确定继续吗？')) return;
+          
+          try {
+            const res = await fetch('/NicholasLai/setting?action=restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key })
+            });
+            const data = await res.json();
+            if (data.code === 200) {
+              alert('✅ 恢复成功！即将刷新页面');
+              location.reload();
+            } else alert('恢复失败: ' + data.message);
+          } catch(e) { alert('请求异常'); }
+        }
+
+        function executeImport(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          if(!confirm('⚠️ 警告：导入的数据将完全覆盖当前所有配置！确定继续吗？')) {
+            event.target.value = ''; // 取消则清空选择
+            return;
+          }
+          
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const content = e.target.result;
+            try {
+              const res = await fetch('/NicholasLai/setting?action=import', {
+                method: 'POST',
+                body: content
+              });
+              const data = await res.json();
+              if (data.code === 200) {
+                alert('✅ 导入成功！即将刷新页面');
+                location.reload();
+              } else alert('导入失败: ' + data.message);
+            } catch(err) { alert('请求异常'); }
+          };
+          reader.readAsText(file);
+          event.target.value = ''; // 执行完毕清空
+        }
+		
         // 上下箭头排序功能
         function moveUp(btn) {
           const current = btn.closest('.node-card');
@@ -1002,4 +1147,59 @@ async function handleSaveSettings(request, env) {
   const newData = await request.json();
   await env.KV_DATA.put('WORKER_CONFIG', JSON.stringify(newData));
   return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// ==================== 数据管理与备份恢复 ====================
+async function handleBackupConfig(env) {
+  const data = await env.KV_DATA.get('WORKER_CONFIG');
+  if (!data) return new Response(JSON.stringify({ code: 400, message: '没有可备份的数据' }));
+  
+  // 生成东八区时间，格式：backup_20260818_181005
+  const tzOffset = 8 * 60 * 60 * 1000;
+  const now = new Date(Date.now() + tzOffset);
+  const timeStr = now.toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/[-:]/g, '');
+  const backupKey = `backup_${timeStr}`;
+  
+  await env.KV_DATA.put(backupKey, data);
+  return new Response(JSON.stringify({ code: 200, message: '备份成功', key: backupKey }));
+}
+
+async function handleListBackups(env) {
+  const list = await env.KV_DATA.list({ prefix: 'backup_' });
+  // 按照时间倒序排列（最新备份在最上）
+  const keys = list.keys.map(k => k.name).sort().reverse();
+  return new Response(JSON.stringify({ code: 200, data: keys }));
+}
+
+async function handleRestoreConfig(request, env) {
+  const { key } = await request.json();
+  if (!key) return new Response(JSON.stringify({ code: 400, message: '缺少备份键名' }));
+  
+  const data = await env.KV_DATA.get(key);
+  if (!data) return new Response(JSON.stringify({ code: 404, message: '备份不存在' }));
+  
+  await env.KV_DATA.put('WORKER_CONFIG', data);
+  return new Response(JSON.stringify({ code: 200, message: '恢复成功' }));
+}
+
+async function handleExportConfig(env) {
+  const data = await env.KV_DATA.get('WORKER_CONFIG') || '[]';
+  return new Response(data, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Disposition': `attachment; filename="cloudflare_dashboard_export_${Date.now()}.json"`
+    }
+  });
+}
+
+async function handleImportConfig(request, env) {
+  try {
+    const data = await request.text();
+    // 校验 JSON 格式
+    JSON.parse(data);
+    await env.KV_DATA.put('WORKER_CONFIG', data);
+    return new Response(JSON.stringify({ code: 200, message: '导入成功' }));
+  } catch(e) {
+    return new Response(JSON.stringify({ code: 400, message: '导入的数据格式错误' }));
+  }
 }
