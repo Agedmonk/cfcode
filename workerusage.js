@@ -501,7 +501,7 @@ function buildPageLayout(title, contentHtml, isSubPage = false) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-      <title>${title}用量监控系统</title>
+      <title>${title}监控系统</title>
       <script src="https://cdn.tailwindcss.com"></script>
       <style>
         .custom-scrollbar::-webkit-scrollbar { width: 5px; }
@@ -573,7 +573,7 @@ async function handleDisplayPage(env) {
   
   if (displayData.length === 0) {
     const emptyHtml = `<div class="text-center py-20 text-gray-500">暂无需要展示的项目，请前往配置页添加。</div>`;
-    return new Response(buildPageLayout("Workers & Pages 流量概览", emptyHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
+    return new Response(buildPageLayout("Cloudflare 用量概览", emptyHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
   }
 
   const cardsHtmlPromise = displayData.map(async (item) => {
@@ -584,7 +584,7 @@ async function handleDisplayPage(env) {
   const resolvedCards = await Promise.all(cardsHtmlPromise);
   const contentHtml = `<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 w-full">${resolvedCards.join('')}</div>`;
   
-  return new Response(buildPageLayout("Workers & Pages 用量", contentHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
+  return new Response(buildPageLayout("Cloudflare 用量", contentHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
 
 async function handleSpecificDisplayPage(env, targetTag, hostname) {
