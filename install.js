@@ -1,5 +1,5 @@
 //2026-08-18 1333
-const CURRENT_VERSION = "1.0.202608181350"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181415"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
