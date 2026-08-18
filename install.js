@@ -1,5 +1,4 @@
-//2026-08-18 1333
-const CURRENT_VERSION = "1.0.202608181415"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608181430"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -774,9 +773,9 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       </div>
 
       <div class="nav-links" style="align-items: center;">
+		<a href="/dashboard">📋 常用部署</a>
         <a href="javascript:void(0)" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 8px; padding: 8px 16px;">获取版本中...</a>
-        <a href="/dashboard">📋 常用部署面板</a>
-        <a href="/logout" class="danger-link">🚪 退出</a>
+        <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
     </div>
   </div>
@@ -965,7 +964,7 @@ function getDashboardPage() {
       <div class="nav-links">
         <a href="/accounts">👤 账户设置</a>
         <a href="/">🏠 返回主页</a>
-        <a href="/logout" class="danger-link">🚪 退出</a>
+        <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
     </div>
   </div>
@@ -1168,7 +1167,7 @@ function getAccountsPage() {
       
       <div class="nav-links">
         <a href="/dashboard">📋 常用部署</a>
-        <a href="/">🏠 主页</a>
+        <a href="/">🏠 返回主页</a>
       </div>
     </div>
   </div>
