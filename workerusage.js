@@ -596,7 +596,7 @@ async function handleDisplayPage(env) {
   const resolvedCards = await Promise.all(cardsHtmlPromise);
   const contentHtml = `<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 w-full">${resolvedCards.join('')}</div>`;
   
-  return new Response(buildPageLayout("Cloudflare 用量", contentHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
+  return new Response(buildPageLayout("Cloudflare 用量概览", contentHtml, false), { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
 
 // --- 独立单节点展示页逻辑 ---
