@@ -355,8 +355,8 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
-    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-    .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); }
+    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; }
+    .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); border-color: #cbd5e1; }
     
     .color-picker { position: relative; }
     .current-color { width: 36px; height: 36px; border-radius: 8px; cursor: pointer; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
@@ -373,7 +373,7 @@ function getAdminPage() {
     .item-row .target-input { grid-column: 1 / -1; }
     @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1.5fr 2.5fr auto; } .item-row .target-input { grid-column: auto; } }
     
-    .item-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+    .item-actions { display: flex; gap: 15px; align-items: center; justify-content: flex-end; padding-left: 10px; }
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
     
@@ -462,7 +462,7 @@ function getAdminPage() {
         let html = \`
         <div class="g-header" onclick="toggleCard(this, event)">
           <div class="g-header-left">
-            <button class="icon-btn arrow-btn">
+            <button class="icon-btn arrow-btn" style="border:none;">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
             </button>
             <div class="color-picker">
@@ -477,7 +477,7 @@ function getAdminPage() {
             </label>
             <button class="icon-btn" onclick="moveG(\${gIdx}, -1, event)" title="上移">\${ICONS.up}</button>
             <button class="icon-btn" onclick="moveG(\${gIdx}, 1, event)" title="下移">\${ICONS.down}</button>
-            <button class="icon-btn" onclick="delG(\${gIdx}, event)" title="删除" style="color:#EF4444; background:#FEF2F2;">\${ICONS.del}</button>
+            <button class="icon-btn" onclick="delG(\${gIdx}, event)" title="删除" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;">\${ICONS.del}</button>
           </div>
         </div>
         <div class="g-body">\`;
@@ -489,11 +489,11 @@ function getAdminPage() {
             <input type="text" placeholder="路由路径" value="\${item.path}" onchange="updateI(\${gIdx},\${iIdx},'path',this.value)">
             <input type="text" class="target-input" placeholder="指向地址(真实链接)" value="\${item.target}" onchange="updateI(\${gIdx},\${iIdx},'target',this.value)">
             <div class="item-actions">
-              <label style="font-size:13px; display:flex; align-items:center; gap:4px;"><input type="checkbox" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显</label>
-              <label style="font-size:13px; display:flex; align-items:center; gap:4px;"><input type="checkbox" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启</label>
-              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
-              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
-              <button class="icon-btn" style="width:30px; height:30px; color:#EF4444;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
+              <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
+              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+              <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
             </div>
           </div>\`;
         });
