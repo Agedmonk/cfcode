@@ -90,7 +90,6 @@ const GLOBAL_STYLE = `
   .container { max-width: 800px; margin: 40px auto; padding: 0 15px; }
   .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; border: 1px solid rgba(255,255,255,0.6); }
   
-  /* 顶部优雅布局 (自适应手机) */
   .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; gap: 15px; flex-wrap: wrap; }
   @media (max-width: 500px) { .top-header { justify-content: center; flex-direction: column; text-align: center; } }
   .top-header h2 { margin: 0; font-size: 22px; font-weight: 600; color: var(--p-blue); letter-spacing: 0.5px; }
@@ -118,7 +117,6 @@ export default {
     const cookies = request.headers.get("Cookie") || "";
     const isAuthed = cookies.includes(`route_auth=${pwd}`);
 
-    // --- 登录/登出 ---
     if (path === "/login") {
       if (request.method === "POST") {
         const formData = await request.formData().catch(() => new FormData());
@@ -133,7 +131,6 @@ export default {
       return new Response("已退出", { status: 302, headers: { "Location": "/login", "Set-Cookie": "route_auth=; Path=/; HttpOnly; Max-Age=0" } });
     }
 
-    // --- 鉴权保护 ---
     if (["/", "/admin"].includes(path) || path.startsWith("/api/")) {
       if (!isAuthed) {
         if (path.startsWith("/api/")) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
@@ -141,7 +138,6 @@ export default {
       }
     }
 
-    // --- 初始化配置 ---
     let configStr = await env.KV.get(CONFIG_KEY);
     let config = configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
     if (!configStr) await env.KV.put(CONFIG_KEY, JSON.stringify(DEFAULT_CONFIG));
@@ -151,11 +147,9 @@ export default {
       if (g.items) g.items.forEach(i => { flatMappings[i.path] = i.target; });
     });
 
-    // --- 页面路由 ---
     if (path === "/") return new Response(getDisplayPage(config, url.hostname), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/admin") return new Response(getAdminPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 
-    // --- API 路由 ---
     if (path === "/api/config") {
       if (request.method === "GET") return new Response(JSON.stringify(config), { headers: { "Content-Type": "application/json" } });
       if (request.method === "POST") {
@@ -190,7 +184,6 @@ export default {
       return new Response(JSON.stringify({ success: true }));
     }
 
-    // --- 代理与重定向 ---
     if (path === "/proxy") {
       const targetUrl = url.searchParams.get("url");
       if (!targetUrl || !Object.values(flatMappings).includes(targetUrl)) return new Response("Forbidden", { status: 403 });
@@ -355,6 +348,7 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
+    /* 图标按钮：方形、8px圆角、36x36、带边框 */
     .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; }
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); border-color: #cbd5e1; }
     
@@ -373,7 +367,9 @@ function getAdminPage() {
     .item-row .target-input { grid-column: 1 / -1; }
     @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1.5fr 2.5fr auto; } .item-row .target-input { grid-column: auto; } }
     
-    .item-actions { display: flex; gap: 15px; align-items: center; justify-content: flex-end; padding-left: 10px; }
+    /* 重点修正：条目的操作区域间距放大，文本显示全拼 */
+    .item-actions { display: flex; gap: 16px; align-items: center; justify-content: flex-end; padding-left: 10px; flex-wrap: wrap; }
+    
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
     
@@ -489,11 +485,13 @@ function getAdminPage() {
             <input type="text" placeholder="路由路径" value="\${item.path}" onchange="updateI(\${gIdx},\${iIdx},'path',this.value)">
             <input type="text" class="target-input" placeholder="指向地址(真实链接)" value="\${item.target}" onchange="updateI(\${gIdx},\${iIdx},'target',this.value)">
             <div class="item-actions">
-              <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
-              <label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
-              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
-              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
-              <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)"> 显示</label>
+              <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)"> 启用</label>
+              <div style="display:flex; gap:8px;">
+                <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+                <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+                <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              </div>
             </div>
           </div>\`;
         });
