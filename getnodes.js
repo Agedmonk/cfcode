@@ -67,7 +67,7 @@ const DEFAULT_CONFIG = {
   ]
 };
 
-// 32种潘通色 CSS生成
+// 32种潘通色 CSS生成 (已修复转义符bug)
 const generateColors = () => {
   const hex = [
     '#F94144', '#F3722C', '#F8961E', '#F9844A', '#F9C74F', '#90BE6D', '#43AA8B', '#4D908E',
@@ -75,9 +75,9 @@ const generateColors = () => {
     '#219EBC', '#023047', '#FFB703', '#FB8500', '#E63946', '#B5838D', '#E5989B', '#457B9D',
     '#1D3557', '#D90429', '#8D99AE', '#2B2D42', '#F72585', '#7209B7', '#3A0CA3', '#4361EE'
   ];
-  // 浅色背景需要深色文字
   const lightIndexes = [5, 12, 16, 23];
-  return hex.map((h, i) => `.c-${i+1} { background: ${h}; color: ${lightIndexes.includes(i+1) ? '#1E293B' : '#FFFFFF'}; }`).join('\\n');
+  // 使用空字符串进行join，避免换行符破坏CSS语法
+  return hex.map((h, i) => `.c-${i+1} { background-color: ${h} !important; color: ${lightIndexes.includes(i+1) ? '#1E293B' : '#FFFFFF'} !important; }`).join('');
 };
 
 const GLOBAL_STYLE = `
@@ -344,7 +344,8 @@ function getAdminPage() {
     .btn-purple { background: #8B5CF6; color: #fff; } .btn-blue { background: #3B82F6; color: #fff; }
     
     .group-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 20px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
-    .g-header { background: #fafbfc; padding: 15px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+    .g-header { background: #fafbfc; padding: 15px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; transition: background 0.2s; }
+    .g-header:hover { background: #f1f2f6; }
     .g-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 250px; }
     .g-header-right { display: flex; align-items: center; gap: 10px; }
     .g-header input[type="text"] { border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 8px; font-size: 14px; flex: 1; max-width: 180px; }
@@ -444,11 +445,12 @@ function getAdminPage() {
 
         const div = document.createElement('div');
         div.className = \`group-card \${g._expanded !== false ? 'expanded' : ''}\`;
+        div.dataset.index = gIdx; // 供 DOM 交互获取索引
         
         let html = \`
-        <div class="g-header">
+        <div class="g-header" onclick="toggleCard(this, event)">
           <div class="g-header-left">
-            <button class="icon-btn arrow-btn" onclick="toggleG(\${gIdx})">
+            <button class="icon-btn arrow-btn">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:0.3s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
             </button>
             <div class="color-picker">
@@ -461,9 +463,9 @@ function getAdminPage() {
             <label style="font-size:14px; cursor:pointer; display:flex; align-items:center; gap:5px; margin-right:5px;">
               <input type="checkbox" style="transform:scale(1.2);" \${g.show?'checked':''} onchange="updateG(\${gIdx}, 'show', this.checked)"> 显示
             </label>
-            <button class="icon-btn" onclick="moveG(\${gIdx}, -1)" title="上移">⬆️</button>
-            <button class="icon-btn" onclick="moveG(\${gIdx}, 1)" title="下移">⬇️</button>
-            <button class="icon-btn" onclick="delG(\${gIdx})" title="删除" style="color:#EF4444; background:#FEF2F2;">✖️</button>
+            <button class="icon-btn" onclick="moveG(\${gIdx}, -1, event)" title="上移">⬆️</button>
+            <button class="icon-btn" onclick="moveG(\${gIdx}, 1, event)" title="下移">⬇️</button>
+            <button class="icon-btn" onclick="delG(\${gIdx}, event)" title="删除" style="color:#EF4444; background:#FEF2F2;">✖️</button>
           </div>
         </div>
         <div class="g-body">\`;
@@ -490,18 +492,32 @@ function getAdminPage() {
       });
     }
 
-    // 数据交互逻辑 (非结构更新不调用 render，防止失去焦点)
+    // 后台页面手风琴切换逻辑 (DOM 操作实现，防止失去焦点)
+    function toggleCard(el, e) {
+      // 排除输入框、按钮和色块组件的冒泡
+      if(['INPUT', 'BUTTON', 'SELECT', 'LABEL'].includes(e.target.tagName) || e.target.closest('.color-picker') || e.target.closest('button')) {
+        return;
+      }
+      const card = el.closest('.group-card');
+      card.classList.toggle('expanded');
+      
+      // 更新内存配置数据，以便保存和重新渲染时记住状态
+      const gIdx = card.dataset.index;
+      configData.groups[gIdx]._expanded = card.classList.contains('expanded');
+    }
+
+    // 数据交互逻辑 (仅必要的结构更新才调用 render，普通更新直接操作数据对象)
     const updateG = (g, k, v) => configData.groups[g][k] = v;
     const updateI = (g, i, k, v) => configData.groups[g].items[i][k] = v;
     
     const swap = (arr, i, j) => { if(j>=0 && j<arr.length) [arr[i], arr[j]] = [arr[j], arr[i]]; };
-    const moveG = (g, d) => { swap(configData.groups, g, g+d); render(); };
+    
+    const moveG = (g, d, e) => { if(e) e.stopPropagation(); swap(configData.groups, g, g+d); render(); };
     const moveI = (g, i, d) => { swap(configData.groups[g].items, i, i+d); render(); };
-    const delG = (g) => { if(confirm('确认删除整组节点吗？')) { configData.groups.splice(g, 1); render(); } };
+    const delG = (g, e) => { if(e) e.stopPropagation(); if(confirm('确认删除整组节点吗？')) { configData.groups.splice(g, 1); render(); } };
     const delI = (g, i) => { configData.groups[g].items.splice(i, 1); render(); };
     const addG = () => { configData.groups.push({ id:'g'+Date.now(), name:'新节点组', color: 1, show:true, _expanded:true, items:[] }); render(); };
     const addI = (g) => { configData.groups[g].items.push({ name:'', path:'', target:'', show:true, enabled:true }); render(); };
-    const toggleG = (g) => { configData.groups[g]._expanded = !configData.groups[g]._expanded; render(); };
     
     const togglePicker = (g, e) => {
       e.stopPropagation();
