@@ -265,11 +265,13 @@ function getDisplayPage(config, domain) {
   </style></head><body>
   <div class="container">
     <div class="top-header">
-      <h2>🌍 全球机房节点</h2>
+      <h2>🌍全球机房节点</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
         <a href="/map" class="top-btn">🗺️路由导图</a>
-        <a href="/admin" class="top-btn">⚙️节点管理</a>
-        <a href="/logout" class="top-btn" style="color:var(--p-magenta)">❌退出</a>
+        <a href="/admin" class="top-btn">⚙️后台管理</a>
+        <a href="/logout" class="top-btn" style="color:var(--p-magenta)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>退出
+        </a>
       </div>
     </div>
     
@@ -278,15 +280,15 @@ function getDisplayPage(config, domain) {
     ${html}
     
     <div class="action-box">
-      <button onclick="copyContent('linkUrl', '订阅地址已复制')">🔗 复制当前节点订阅链接</button>
+      <button onclick="copyContent('linkUrl', '订阅地址已复制')">🔗复制当前节点订阅链接</button>
       <div class="data-box" id="linkUrl">点击上方任意可用节点...</div>
     </div>
     <div class="action-box">
-      <button onclick="copyContent('sourceUrl', '实际地址已复制')" style="background:#475569">🎯 复制当前节点实际地址</button>
+      <button onclick="copyContent('sourceUrl', '实际地址已复制')" style="background:#475569">🎯复制当前节点实际地址</button>
       <div class="data-box" id="sourceUrl">等待选择节点...</div>
     </div>
     <div class="action-box">
-      <button onclick="copyContent('output', '节点内容已复制')" style="background:#10B981">📄 复制当前节点具体内容</button>
+      <button onclick="copyContent('output', '节点内容已复制')" style="background:#10B981">📄复制当前节点具体内容</button>
       <div class="data-box" id="output" style="white-space:pre-wrap; min-height:100px;">等待选择节点...</div>
     </div>
   </div>
@@ -341,10 +343,10 @@ function getMapPage(config, domain) {
   </head><body>
   <div class="container" style="max-width: 1000px;">
     <div class="top-header">
-      <h2>🗺️ 路由层级思维导图</h2>
+      <h2>🗺️路由层级思维导图</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
-        <a href="/" class="top-btn">🏠 返回前台</a>
-        <a href="/admin" class="top-btn">⚙️ 后台管理</a>
+        <a href="/" class="top-btn">🏠返回前台</a>
+        <a href="/admin" class="top-btn">⚙️后台管理</a>
       </div>
     </div>
     
@@ -356,7 +358,6 @@ function getMapPage(config, domain) {
   <script>
     const configData = ${JSON.stringify(config)};
     
-    // 解析路由数据，生成树形结构
     function buildTreeData() {
       const root = { name: '全球路由', children: [] };
       configData.groups.forEach(g => {
@@ -370,10 +371,8 @@ function getMapPage(config, domain) {
             let node = currentLevel.find(n => n.rawName === part);
             if (!node) {
               if (index === parts.length - 1) {
-                // 叶子节点：加上展示名
                 node = { rawName: part, name: part + '\\n(' + item.name + ')', value: item.target };
               } else {
-                // 路径分支节点
                 node = { rawName: part, name: part, children: [] };
               }
               currentLevel.push(node);
@@ -404,9 +403,11 @@ function getMapPage(config, domain) {
         {
           type: 'tree',
           data: [treeData],
+          roam: true, // 核心修复：允许鼠标/手势拖拽平移和缩放
+          scaleLimit: { min: 0.5, max: 3 }, // 限制缩放比例，防止过大过小
           top: '5%', left: '10%', bottom: '5%', right: '20%',
           symbolSize: 10,
-          initialTreeDepth: 2, // 默认展开层级
+          initialTreeDepth: 2,
           label: {
             position: 'left',
             verticalAlign: 'middle',
@@ -440,7 +441,6 @@ function getMapPage(config, domain) {
 
     myChart.setOption(option);
     
-    // 监听窗口缩放重新调整画布
     window.addEventListener('resize', function() {
       myChart.resize();
     });
@@ -500,26 +500,26 @@ function getAdminPage() {
   <div class="container" style="max-width: 1000px; padding-bottom: 100px;">
     
     <div class="top-header">
-      <h2>⚙️ 节点配置管理后台</h2>
+      <h2>⚙️节点配置管理后台</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
-        <a href="/map" class="top-btn">🗺️ 路由导图</a>
-        <a href="/" class="top-btn">🏠 返回前台</a>
+        <a href="/map" class="top-btn">🗺️路由导图</a>
+        <a href="/" class="top-btn">🏠返回前台</a>
       </div>
     </div>
 
     <div class="top-actions">
-      <button class="btn-green" onclick="doBackup()">💾 备份到云端</button>
-      <button class="btn-orange" onclick="showRestore()">⏪ 恢复历史配置</button>
-      <button class="btn-purple" onclick="doExport()">📤 导出 JSON 文件</button>
-      <button class="btn-blue" onclick="document.getElementById('importFile').click()">📥 导入 JSON 文件</button>
+      <button class="btn-green" onclick="doBackup()">💾备份到云端</button>
+      <button class="btn-orange" onclick="showRestore()">⏪恢复历史配置</button>
+      <button class="btn-purple" onclick="doExport()">📤导出JSON文件</button>
+      <button class="btn-blue" onclick="document.getElementById('importFile').click()">📥导入JSON文件</button>
       <input type="file" id="importFile" accept=".json" style="display:none" onchange="doImport(event)">
     </div>
 
     <div id="editorContainer"></div>
-    <button class="add-btn" style="width: 100%; margin: 10px 0;" onclick="addG()">➕ 添加新节点分组</button>
+    <button class="add-btn" style="width: 100%; margin: 10px 0;" onclick="addG()">➕添加新节点分组</button>
 
     <div class="save-bar">
-      <button id="btnSaveConfig" onclick="saveConfig()">🚀 保存所有更改</button>
+      <button id="btnSaveConfig" onclick="saveConfig()">🚀保存所有更改</button>
     </div>
   </div>
 
@@ -612,7 +612,7 @@ function getAdminPage() {
           </div>\`;
         });
         
-        html += \`<button class="add-btn" onclick="addI(\${gIdx})">➕ 为 "\${g.name}" 添加条目</button></div>\`;
+        html += \`<button class="add-btn" onclick="addI(\${gIdx})">➕为 "\${g.name}" 添加条目</button></div>\`;
         div.innerHTML = html;
         container.appendChild(div);
       });
@@ -650,12 +650,12 @@ function getAdminPage() {
 
     async function saveConfig() {
       const btn = document.getElementById('btnSaveConfig');
-      btn.innerHTML = '🔄 正在同步保存...'; btn.disabled = true;
+      btn.innerHTML = '🔄正在同步保存...'; btn.disabled = true;
       try {
         const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(configData) });
-        if((await res.json()).success) btn.innerHTML = '✅ 保存成功！'; else btn.innerHTML = '❌ 保存失败';
-      } catch(e) { btn.innerHTML = '❌ 网络异常'; }
-      setTimeout(() => { btn.innerHTML = '🚀 保存所有更改'; btn.disabled = false; }, 2000);
+        if((await res.json()).success) btn.innerHTML = '✅保存成功！'; else btn.innerHTML = '❌保存失败';
+      } catch(e) { btn.innerHTML = '❌网络异常'; }
+      setTimeout(() => { btn.innerHTML = '🚀保存所有更改'; btn.disabled = false; }, 2000);
     }
 
     async function doBackup() {
