@@ -6,11 +6,11 @@
 const DEFAULT_PASSWORD = 'NicholasLai';
 const CONFIG_KEY = 'ROUTE_CONFIG';
 
-// 初始默认配置（升级为潘通色系代号，1~32）
+// 初始默认配置
 const DEFAULT_CONFIG = {
   groups: [
     {
-      id: "g1", name: "日常连接", color: 29, show: true, _expanded: true,
+      id: "g1", name: "日常连接", color: 29, show: true,
       items: [
         { name: "电信网络", path: "niclai/chinatelecom", target: "https://chinatelecom.qingyuan.city/sub?token=fefd7730454a1d1bf4a89b3202de3c3d", show: true, enabled: true },
         { name: "移动网络", path: "niclai/cmcc", target: "https://cmcc.qingyuan.city/sub?token=df16f2c1fc47b0a4543b6c78cfe73224", show: true, enabled: true },
@@ -21,7 +21,7 @@ const DEFAULT_CONFIG = {
       ]
     },
     {
-      id: "g2", name: "隧道连接", color: 13, show: true, _expanded: false,
+      id: "g2", name: "隧道连接", color: 13, show: true,
       items: [
         { name: "个人机房", path: "edge/niclai.vip", target: "https://edge.niclai.vip/sub?token=102b3972db4ebfa502ec57efdb326578", show: true, enabled: true },
         { name: "肇庆机房", path: "edge/zhaoqing.city", target: "https://edge.zhaoqing.city/sub?token=b1b55f4fcde165fc88d36126e72ef6f7", show: true, enabled: true },
@@ -32,7 +32,7 @@ const DEFAULT_CONFIG = {
       ]
     },
     {
-      id: "g3", name: "影子连接", color: 14, show: true, _expanded: false,
+      id: "g3", name: "影子连接", color: 14, show: true,
       items: [
         { name: "个人机房", path: "ss/niclai.vip", target: "https://ss.niclai.vip/sub/226279dd-28b2-4b61-96be-a2a0b1afd522", show: true, enabled: true },
         { name: "肇庆机房", path: "ss/zhaoqing.city", target: "https://ss.zhaoqing.city/sub/226279dd-28b2-4b61-96be-a2a0b1afd522", show: true, enabled: true },
@@ -43,7 +43,7 @@ const DEFAULT_CONFIG = {
       ]
     },
     {
-      id: "g4", name: "自由中国", color: 30, show: true, _expanded: false,
+      id: "g4", name: "自由中国", color: 30, show: true,
       items: [
         { name: "个人机房", path: "freechina/niclai.vip", target: "https://freechina.niclai.vip/226279dd-28b2-4b61-96be-a2a0b1afd522/sub", show: true, enabled: true },
         { name: "肇庆机房", path: "freechina/zhaoqing.city", target: "https://freechina.zhaoqing.city/226279dd-28b2-4b61-96be-a2a0b1afd522/sub", show: true, enabled: true },
@@ -54,7 +54,7 @@ const DEFAULT_CONFIG = {
       ]
     },
     {
-      id: "g5", name: "实时连接", color: 20, show: true, _expanded: false,
+      id: "g5", name: "实时连接", color: 20, show: true,
       items: [
         { name: "个人机房", path: "bpb/niclai.vip", target: "https://yun.niclai.vip/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw", show: true, enabled: true },
         { name: "肇庆机房", path: "bpb/zhaoqing.city", target: "https://yun.zhaoqing.city/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw", show: true, enabled: true },
@@ -67,7 +67,7 @@ const DEFAULT_CONFIG = {
   ]
 };
 
-// 32种潘通色 CSS生成 (已修复转义符bug)
+// 32种潘通色 CSS生成
 const generateColors = () => {
   const hex = [
     '#F94144', '#F3722C', '#F8961E', '#F9844A', '#F9C74F', '#90BE6D', '#43AA8B', '#4D908E',
@@ -76,7 +76,6 @@ const generateColors = () => {
     '#1D3557', '#D90429', '#8D99AE', '#2B2D42', '#F72585', '#7209B7', '#3A0CA3', '#4361EE'
   ];
   const lightIndexes = [5, 12, 16, 23];
-  // 使用空字符串进行join，避免换行符破坏CSS语法
   return hex.map((h, i) => `.c-${i+1} { background-color: ${h} !important; color: ${lightIndexes.includes(i+1) ? '#1E293B' : '#FFFFFF'} !important; }`).join('');
 };
 
@@ -90,7 +89,14 @@ const GLOBAL_STYLE = `
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-main); background-image: linear-gradient(135deg, #fdfbfb 0%, #f4f7f9 100%); color: var(--text-main); -webkit-font-smoothing: antialiased; min-height: 100vh; }
   .container { max-width: 800px; margin: 40px auto; padding: 0 15px; }
   .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; border: 1px solid rgba(255,255,255,0.6); }
-  h2 { font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 25px; color: var(--p-blue); letter-spacing: 0.5px; }
+  
+  /* 顶部优雅布局 (自适应手机) */
+  .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; gap: 15px; flex-wrap: wrap; }
+  @media (max-width: 500px) { .top-header { justify-content: center; flex-direction: column; text-align: center; } }
+  .top-header h2 { margin: 0; font-size: 22px; font-weight: 600; color: var(--p-blue); letter-spacing: 0.5px; }
+  .top-btn { text-decoration: none; font-size: 14px; font-weight: 500; background: #fff; padding: 8px 18px; border-radius: 20px; box-shadow: var(--shadow); color: var(--text-main); transition: 0.2s; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; }
+  .top-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0,0,0,0.1); }
+
   button { border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; }
   button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.12); filter: brightness(1.05); }
   button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; filter: grayscale(1); }
@@ -248,11 +254,6 @@ function getDisplayPage(config, domain) {
   });
 
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>全球机房 | ${domain}</title><style>${GLOBAL_STYLE}
-    .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 10px; }
-    h2 { margin: 0; }
-    .nav-links a { text-decoration: none; font-size: 14px; padding: 8px 12px; background: rgba(0,0,0,0.05); border-radius: 8px; color: var(--text-main); font-weight: 500; transition: 0.2s; margin-left: 8px; }
-    .nav-links a:hover { background: rgba(0,0,0,0.1); }
-    
     .group-container { border: 1px solid var(--border); margin-bottom: 16px; border-radius: var(--radius); background: #fff; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.02); transition: all 0.3s; }
     .group-title { font-size: 16px; font-weight: 600; padding: 16px 20px; background: #fafbfc; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; }
     .group-title:hover { background: #f1f2f6; }
@@ -269,13 +270,14 @@ function getDisplayPage(config, domain) {
     #customAlert { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #10B981; color: white; padding: 12px 24px; border-radius: 30px; display: none; z-index: 1000; box-shadow: 0 4px 12px rgba(16,185,129,0.3); font-size: 14px; }
   </style></head><body>
   <div class="container">
-    <div class="top-bar">
+    <div class="top-header">
       <h2>🌍 全球机房节点</h2>
-      <div class="nav-links">
-        <a href="/admin">⚙️ 后台</a>
-        <a href="/logout" style="color:var(--p-magenta)">🚪 退出</a>
+      <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/admin" class="top-btn">⚙️ 后台管理</a>
+        <a href="/logout" class="top-btn" style="color:var(--p-magenta)">🚪 退出</a>
       </div>
     </div>
+    
     <div style="color: var(--text-light); margin-bottom: 25px; text-align: center; font-size: 14px; background: #fff; padding: 10px; border-radius: 30px; border: 1px solid var(--border); display: inline-block; width: 100%;">当前域: <b>${domain}</b></div>
     
     ${html}
@@ -337,7 +339,6 @@ function getDisplayPage(config, domain) {
 // ==================== 节点管理页 ====================
 function getAdminPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>节点管理后台</title><style>${GLOBAL_STYLE}
-    .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;}
     .top-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 25px; background: #fff; padding: 15px; border-radius: var(--radius); box-shadow: var(--shadow); }
     .top-actions button { width: 100%; padding: 12px; font-size: 14px; }
     .btn-green { background: #10B981; color: #fff; } .btn-orange { background: #F59E0B; color: #fff; }
@@ -357,12 +358,15 @@ function getAdminPage() {
     .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; }
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); }
     
-    /* 颜色选择器组件 */
+    /* 颜色选择器组件优化: 改为 flex 布局并固定宽度以自适应极窄屏幕 */
     .color-picker { position: relative; }
     .current-color { width: 36px; height: 36px; border-radius: 8px; cursor: pointer; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
-    .picker-grid { display: none; position: absolute; top: 45px; left: 0; background: #fff; border: 1px solid var(--border); padding: 12px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); grid-template-columns: repeat(8, 30px); gap: 6px; z-index: 50; }
-    .picker-grid.active { display: grid; }
-    @media(max-width:400px) { .picker-grid { left: -100px; grid-template-columns: repeat(6, 30px); } }
+    .picker-grid { display: none; position: absolute; top: 45px; left: 0; width: 270px; background: #fff; border: 1px solid var(--border); padding: 12px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); display: flex; flex-wrap: wrap; gap: 6px; z-index: 50; }
+    /* 初始化时设为 display: none，被 active 激活时转为 display: flex */
+    .picker-grid { display: none !important; }
+    .picker-grid.active { display: flex !important; }
+    
+    @media(max-width: 350px) { .picker-grid { left: -10px; width: 240px; } }
     .color-swatch { width: 30px; height: 30px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,0.05); transition: 0.2s; }
     .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     
@@ -384,9 +388,12 @@ function getAdminPage() {
     .modal-content { background: #fff; padding: 30px; border-radius: var(--radius); width: 90%; max-width: 400px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
   </style></head><body>
   <div class="container" style="max-width: 1000px; padding-bottom: 100px;">
-    <div class="top-bar">
+    
+    <div class="top-header">
       <h2>⚙️ 节点配置管理后台</h2>
-      <a href="/" style="text-decoration:none; color:var(--text-light); font-size:15px; font-weight:500; background:#fff; padding:8px 16px; border-radius:20px; box-shadow:var(--shadow);">🏠 返回前台</a>
+      <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/" class="top-btn">🏠 返回前台</a>
+      </div>
     </div>
 
     <div class="top-actions">
@@ -429,6 +436,10 @@ function getAdminPage() {
     async function loadData() {
       const res = await fetch('/api/config');
       configData = await res.json();
+      // 核心需求：后台管理页强制将所有分组折叠收起
+      configData.groups.forEach(g => {
+         g._expanded = false; 
+      });
       render();
     }
 
@@ -444,8 +455,8 @@ function getAdminPage() {
         }
 
         const div = document.createElement('div');
-        div.className = \`group-card \${g._expanded !== false ? 'expanded' : ''}\`;
-        div.dataset.index = gIdx; // 供 DOM 交互获取索引
+        div.className = \`group-card \${g._expanded ? 'expanded' : ''}\`;
+        div.dataset.index = gIdx; 
         
         let html = \`
         <div class="g-header" onclick="toggleCard(this, event)">
@@ -492,21 +503,19 @@ function getAdminPage() {
       });
     }
 
-    // 后台页面手风琴切换逻辑 (DOM 操作实现，防止失去焦点)
+    // 后台页面手风琴切换逻辑
     function toggleCard(el, e) {
-      // 排除输入框、按钮和色块组件的冒泡
       if(['INPUT', 'BUTTON', 'SELECT', 'LABEL'].includes(e.target.tagName) || e.target.closest('.color-picker') || e.target.closest('button')) {
         return;
       }
       const card = el.closest('.group-card');
       card.classList.toggle('expanded');
       
-      // 更新内存配置数据，以便保存和重新渲染时记住状态
       const gIdx = card.dataset.index;
       configData.groups[gIdx]._expanded = card.classList.contains('expanded');
     }
 
-    // 数据交互逻辑 (仅必要的结构更新才调用 render，普通更新直接操作数据对象)
+    // 数据交互逻辑 
     const updateG = (g, k, v) => configData.groups[g][k] = v;
     const updateI = (g, i, k, v) => configData.groups[g].items[i][k] = v;
     
