@@ -348,7 +348,6 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
-    /* 图标按钮：方形、8px圆角、36x36、带边框 */
     .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; }
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); border-color: #cbd5e1; }
     
@@ -367,8 +366,8 @@ function getAdminPage() {
     .item-row .target-input { grid-column: 1 / -1; }
     @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1.5fr 2.5fr auto; } .item-row .target-input { grid-column: auto; } }
     
-    /* 重点修正：条目的操作区域间距放大，文本显示全拼 */
-    .item-actions { display: flex; gap: 16px; align-items: center; justify-content: flex-end; padding-left: 10px; flex-wrap: wrap; }
+    /* 重点修正：让复选框与按钮区域全部在一行展示，绝不换行 */
+    .item-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; }
     
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
@@ -485,11 +484,11 @@ function getAdminPage() {
             <input type="text" placeholder="路由路径" value="\${item.path}" onchange="updateI(\${gIdx},\${iIdx},'path',this.value)">
             <input type="text" class="target-input" placeholder="指向地址(真实链接)" value="\${item.target}" onchange="updateI(\${gIdx},\${iIdx},'target',this.value)">
             <div class="item-actions">
-              <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)"> 显示</label>
-              <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)"> 启用</label>
-                <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
-                <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
-                <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
+              <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
+              <button class="icon-btn" style="margin-left:4px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+              <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
             </div>
           </div>\`;
         });
