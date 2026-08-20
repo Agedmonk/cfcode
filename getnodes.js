@@ -487,11 +487,9 @@ function getAdminPage() {
             <div class="item-actions">
               <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)"> 显示</label>
               <label style="font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" style="transform:scale(1.1);" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)"> 启用</label>
-              <div style="display:flex; gap:8px;">
                 <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
                 <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
                 <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
-              </div>
             </div>
           </div>\`;
         });
