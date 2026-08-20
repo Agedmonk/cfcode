@@ -349,7 +349,7 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
-    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; }
+    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; min-height: 36px; min-width: 36px;}
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); border-color: #cbd5e1; }
     
     .color-picker { position: relative; }
