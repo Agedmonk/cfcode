@@ -1,6 +1,6 @@
 /**
  * 全球路由管理系统
- * 包含：登录验证、多彩节点展示、可折叠节点后台管理、KV数据备份/恢复/导入/导出
+ * 包含：登录验证、多彩节点展示、可折叠节点后台管理、ECharts思维导图、KV数据备份/恢复/导入/导出
  */
 
 const DEFAULT_PASSWORD = 'NicholasLai';
@@ -131,7 +131,7 @@ export default {
       return new Response("已退出", { status: 302, headers: { "Location": "/login", "Set-Cookie": "route_auth=; Path=/; HttpOnly; Max-Age=0" } });
     }
 
-    if (["/", "/admin"].includes(path) || path.startsWith("/api/")) {
+    if (["/", "/admin", "/map"].includes(path) || path.startsWith("/api/")) {
       if (!isAuthed) {
         if (path.startsWith("/api/")) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
         return Response.redirect(url.origin + '/login', 302);
@@ -149,6 +149,7 @@ export default {
 
     if (path === "/") return new Response(getDisplayPage(config, url.hostname), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/admin") return new Response(getAdminPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+    if (path === "/map") return new Response(getMapPage(config, url.hostname), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 
     if (path === "/api/config") {
       if (request.method === "GET") return new Response(JSON.stringify(config), { headers: { "Content-Type": "application/json" } });
@@ -266,6 +267,7 @@ function getDisplayPage(config, domain) {
     <div class="top-header">
       <h2>🌍 全球机房节点</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/map" class="top-btn">🗺️ 路由导图</a>
         <a href="/admin" class="top-btn">⚙️ 后台管理</a>
         <a href="/logout" class="top-btn" style="color:var(--p-magenta)">🚪 退出</a>
       </div>
@@ -329,6 +331,123 @@ function getDisplayPage(config, domain) {
 </body></html>`;
 }
 
+// ==================== 节点导图页 (思维导图) ====================
+function getMapPage(config, domain) {
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>路由思维导图 | ${domain}</title><style>${GLOBAL_STYLE}
+    .chart-container { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px; width: 100%; height: 75vh; min-height: 500px; overflow: hidden; }
+    #mindMap { width: 100%; height: 100%; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  </head><body>
+  <div class="container" style="max-width: 1000px;">
+    <div class="top-header">
+      <h2>🗺️ 路由层级思维导图</h2>
+      <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/" class="top-btn">🏠 返回前台</a>
+        <a href="/admin" class="top-btn">⚙️ 后台管理</a>
+      </div>
+    </div>
+    
+    <div class="chart-container">
+      <div id="mindMap"></div>
+    </div>
+  </div>
+
+  <script>
+    const configData = ${JSON.stringify(config)};
+    
+    // 解析路由数据，生成树形结构
+    function buildTreeData() {
+      const root = { name: '全球路由', children: [] };
+      configData.groups.forEach(g => {
+        if(!g.show) return;
+        g.items.forEach(item => {
+          if(!item.show) return;
+          const parts = item.path.split('/').filter(Boolean);
+          let currentLevel = root.children;
+
+          parts.forEach((part, index) => {
+            let node = currentLevel.find(n => n.rawName === part);
+            if (!node) {
+              if (index === parts.length - 1) {
+                // 叶子节点：加上展示名
+                node = { rawName: part, name: part + '\\n(' + item.name + ')', value: item.target };
+              } else {
+                // 路径分支节点
+                node = { rawName: part, name: part, children: [] };
+              }
+              currentLevel.push(node);
+            }
+            if (index < parts.length - 1) {
+              if (!node.children) node.children = [];
+              currentLevel = node.children;
+            }
+          });
+        });
+      });
+      return root;
+    }
+
+    const treeData = buildTreeData();
+    const myChart = echarts.init(document.getElementById('mindMap'));
+
+    const option = {
+      tooltip: { 
+        trigger: 'item', 
+        triggerOn: 'mousemove',
+        formatter: function(params) {
+          if(params.data.value) return '<b>指向:</b><br/>' + params.data.value;
+          return params.data.name;
+        }
+      },
+      series: [
+        {
+          type: 'tree',
+          data: [treeData],
+          top: '5%', left: '10%', bottom: '5%', right: '20%',
+          symbolSize: 10,
+          initialTreeDepth: 2, // 默认展开层级
+          label: {
+            position: 'left',
+            verticalAlign: 'middle',
+            align: 'right',
+            fontSize: 13,
+            backgroundColor: '#fff',
+            padding: [4, 8],
+            borderRadius: 6,
+            borderColor: '#0f4c81',
+            borderWidth: 1,
+            color: '#2c3e50',
+            lineHeight: 18
+          },
+          leaves: {
+            label: {
+              position: 'right',
+              verticalAlign: 'middle',
+              align: 'left',
+              backgroundColor: '#10B981',
+              color: '#fff',
+              borderColor: '#10B981',
+              fontWeight: 500
+            }
+          },
+          expandAndCollapse: true,
+          animationDuration: 550,
+          animationDurationUpdate: 750
+        }
+      ]
+    };
+
+    myChart.setOption(option);
+    
+    // 监听窗口缩放重新调整画布
+    window.addEventListener('resize', function() {
+      myChart.resize();
+    });
+  </script>
+</body></html>`;
+}
+
 // ==================== 节点管理页 ====================
 function getAdminPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>节点管理后台</title><style>${GLOBAL_STYLE}
@@ -361,20 +480,12 @@ function getAdminPage() {
     .color-swatch { width: 30px; height: 30px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,0.05); transition: 0.2s; }
     .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     
-    /* 横向跨越：让复选框与按钮区域在手机端横跨整行 */
     .item-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; padding: 12px 15px; border-bottom: 1px solid #f1f2f6; align-items: center; }
     .item-row input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
     .item-row .target-input { grid-column: 1 / -1; }
-    .item-row .item-actions { grid-column: 1 / -1; } /* 确保手机端横跨整行，不受上方 input 挤压 */
+    @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1fr 2fr auto; } .item-row .target-input { grid-column: auto; } }
     
-    @media(min-width: 800px) { 
-        .item-row { grid-template-columns: 1fr 1fr 2fr auto; } 
-        .item-row .target-input { grid-column: auto; } 
-        .item-row .item-actions { grid-column: auto; }
-    }
-    
-    /* 重点修正：利用 flex-wrap: nowrap 强制在一行，通过 overflow-x: auto 允许极端窄屏下左右滑动，拒绝换行 */
-    .item-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
+    .item-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
     
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
@@ -391,6 +502,7 @@ function getAdminPage() {
     <div class="top-header">
       <h2>⚙️ 节点配置管理后台</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
+        <a href="/map" class="top-btn">🗺️ 路由导图</a>
         <a href="/" class="top-btn">🏠 返回前台</a>
       </div>
     </div>
@@ -493,11 +605,9 @@ function getAdminPage() {
             <div class="item-actions">
               <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
               <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
-              <div style="display:flex; gap:8px;">
-                  <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
-                  <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
-                  <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
-              </div>
+              <button class="icon-btn" style="margin-left:4px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+              <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
             </div>
           </div>\`;
         });
