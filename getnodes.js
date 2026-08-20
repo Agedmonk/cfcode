@@ -2,7 +2,7 @@ const DEFAULT_REPOSITORIES_PATH = 'https://raw.githubusercontent.com/LaiJunLing/
 
 // 默认的初始数据（包含密码、路由映射、节点分组及条目）
 const DEFAULT_DATA = {
-  password: '123456',
+  password: 'NicholasLai',
   // 路由分组/映射（包含 target 目标地址与 enabled 使能开关，默认 true）
   routes: {
     'zhaoqing': { target: DEFAULT_REPOSITORIES_PATH + 'station-zhaoqing.txt', enabled: true },
