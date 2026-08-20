@@ -486,8 +486,8 @@ function getAdminPage() {
             <input type="text" placeholder="路由路径" value="\${item.path}" onchange="updateI(\${gIdx},\${iIdx},'path',this.value)">
             <input type="text" class="target-input" placeholder="指向地址(真实链接)" value="\${item.target}" onchange="updateI(\${gIdx},\${iIdx},'target',this.value)">
             <div class="item-actions">
-              <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
-              <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
+              <label style="font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
+              <label style="font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
               <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
               <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
               <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
