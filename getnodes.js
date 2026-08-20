@@ -1,414 +1,552 @@
-/**
- * 全球机房发布系统
- * 逻辑：
- * 1. 自动提取当前根域名 (Root Domain)。
- * 2. 匹配失败 -> 自动重定向到 https://www.当前根域名。
- * 3. 快捷键 (/ss) -> 自动补全为 /ss/当前根域名。
- * 4. 节点内容请求 -> 前端通过 /proxy?url= 代理获取，解决跨域。
- */
+const DEFAULT_REPOSITORIES_PATH = 'https://raw.githubusercontent.com/LaiJunLing/team/refs/heads/main/'
 
-const repositories_path = 'https://raw.githubusercontent.com/Agedmonk/team/refs/heads/main/'
-
-const MAPPINGS = {
-  //板块1：日常连接 (Niclai)
-  'home': 'https://home.qingyuan.city/sub?token=358d8b97e89b6219a60e384d31ccae9f', 
-  'chinatelecom': 'https://chinatelecom.qingyuan.city/sub?token=fefd7730454a1d1bf4a89b3202de3c3d',
-  'cmcc': 'https://cmcc.qingyuan.city/sub?token=df16f2c1fc47b0a4543b6c78cfe73224',
-  'huahailink': 'https://huahailink.qingyuan.city/sub?token=5507dfd45861611c21c7a0a75d7eb6ec',
-  'huahai': 'https://huahailink.qingyuan.city/sub?token=5507dfd45861611c21c7a0a75d7eb6ec',
-  
-  'niclai/home': 'https://home.qingyuan.city/sub?token=358d8b97e89b6219a60e384d31ccae9f', 
-  'niclai/chinatelecom': 'https://chinatelecom.qingyuan.city/sub?token=fefd7730454a1d1bf4a89b3202de3c3d',
-  'niclai/cmcc': 'https://cmcc.qingyuan.city/sub?token=df16f2c1fc47b0a4543b6c78cfe73224',
-  'niclai/huahailink': 'https://huahailink.qingyuan.city/sub?token=5507dfd45861611c21c7a0a75d7eb6ec',
-  'niclai/huahai': 'https://huahailink.qingyuan.city/sub?token=5507dfd45861611c21c7a0a75d7eb6ec',
-  
-  // 板块2：隧道连接 (EdgeTunnel)
-  'edge/niclai.vip': 'https://edge.niclai.vip/sub?token=102b3972db4ebfa502ec57efdb326578',
-  'edge/sihui.city': 'https://edge.sihui.city/sub?token=35e40796c83ae28dbd6ec9827d4a52b4',
-  'edge/zhaoqing.city': 'https://edge.zhaoqing.city/sub?token=b1b55f4fcde165fc88d36126e72ef6f7',
-  'edge/zhaoqing.icu': 'https://edge.zhaoqing.icu/sub?token=ee938efddaebde70ac91aea7e078cc12',
-  'edge/qingyuan.city': 'https://edge.qingyuan.city/sub?token=30a0f2fb0782887ac7b619f64a595288',
-  'edge/maoming.city': 'https://edge.maoming.city/sub?token=8ce078439673804c0da42bb56b6a03e3',
-  
-  // 板块3：影子连接 (SS)
-  'ss/niclai.vip': 'https://ss.niclai.vip/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/sihui.city': 'https://ss.sihui.city/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/zhaoqing.city': 'https://ss.zhaoqing.city/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/zhaoqing.icu': 'https://ss.zhaoqing.icu/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/qingyuan.city': 'https://ss.qingyuan.city/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/maoming.city': 'https://ss.maoming.city/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-  'ss/huahai.asia': 'https://ss.huahai.asia/sub/226279dd-28b2-4b61-96be-a2a0b1afd522',
-
-  // 板块4：自由中国 (FreeChina)
-  'freechina/niclai.vip': 'https://freechina.niclai.vip/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  'freechina/sihui.city': 'https://freechina.sihui.city/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  'freechina/zhaoqing.city': 'https://freechina.zhaoqing.city/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  'freechina/zhaoqing.icu': 'https://freechina.zhaoqing.icu/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  'freechina/qingyuan.city': 'https://freechina.qingyuan.city/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  'freechina/maoming.city': 'https://freechina.maoming.city/226279dd-28b2-4b61-96be-a2a0b1afd522/sub',
-  
-  // 板块5：实时连接 (BPB)
-  'bpb/niclai.vip': 'https://yun.niclai.vip/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  'bpb/sihui.city': 'https://yun.sihui.city/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  'bpb/zhaoqing.city': 'https://yun.zhaoqing.city/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  'bpb/zhaoqing.icu': 'https://yun.zhaoqing.icu/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  'bpb/qingyuan.city': 'https://yun.qingyuan.city/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  'bpb/maoming.city': 'https://yun.maoming.city/sub/raw/226279dd-28b2-4b61-96be-a2a0b1afd522?app=xray#%F0%9F%92%A6%20BPB%20Raw',
-  
-  // 板块6：基地连接 (Station)
-  'station/niclai': repositories_path + 'station-niclai.txt',
-  'station/sihui': repositories_path + 'station-sihui.txt',
-  'station/zhaoqing': repositories_path + 'station-zhaoqing.txt',
-  'station/oracle': repositories_path + 'oracle.txt',
-  'station/auto': repositories_path + 'auto.txt',
-  'station/allnodes': repositories_path + 'allnodes.txt',
-  'station/home': repositories_path + 'home.txt',
-  'station/huahailink': repositories_path + 'huahailink.txt',
-  'station/huahai': repositories_path + 'huahailink.txt',
-  'station/chinatelecom': repositories_path + 'chinatelecom.txt',
-  
-      //板块7：清远机房
-  'qingyuan.city/edge':"https://edge.qingyuan.city/sub?token=30a0f2fb0782887ac7b619f64a595288",
-  'qingyuan.city/home':"https://home.qingyuan.city/sub?token=358d8b97e89b6219a60e384d31ccae9f",
-  'qingyuan.city/huahailink':"https://huahailink.qingyuan.city/sub?token=5507dfd45861611c21c7a0a75d7eb6ec",
-  'qingyuan.city/cmcc':"https://cmcc.qingyuan.city/sub?token=df16f2c1fc47b0a4543b6c78cfe73224",
-  'qingyuan.city/chinatelecom':"https://chinatelecom.qingyuan.city/sub?token=fefd7730454a1d1bf4a89b3202de3c3d",
-  
-      //板块8：肇庆机房
-  'zhaoqing.city/edge':"https://edge.zhaoqing.city/sub?token=b1b55f4fcde165fc88d36126e72ef6f7",
-  'zhaoqing.city/home':"https://home.zhaoqing.city/sub?token=dc040ed728cfcb9a1218e96a4c056c61",
-  'zhaoqing.city/huahailink':"https://huahailink.zhaoqing.city/sub?token=8ff6ee6dda08c73e1510457b87dbb6a9",
-  'zhaoqing.city/cmcc':"https://cmcc.zhaoqing.city/sub?token=1d23946640d723cbee807ecfe3c83242",
-  'zhaoqing.city/chinatelecom':"https://chinatelecom.zhaoqing.city/sub?token=daa40aa3126edab5d6284cbc8fd32e51",
-  
-    //板块9：茂名机房
-  'maoming.city/edge':"https://edge.maoming.city/sub?token=8ce078439673804c0da42bb56b6a03e3",
-  'maoming.city/home':"https://home.maoming.city/sub?token=79ad53b685529ce9732fbfcc0a276c6e",
-  'maoming.city/huahailink':"https://huahailink.maoming.city/sub?token=bf6adacdacb030fc2e2f778cf45f5f5a",
-  'maoming.city/cmcc':"https://cmcc.maoming.city/sub?token=a3be3e68caeb5a6f80b8b810a0660f30",
-  'maoming.city/chinatelecom':"https://chinatelecom.maoming.city/sub?token=aa130b3d12258d7dadf628656ad044d0",
-  
-      //板块10：四会机房
-  'sihui.city/edge':"https://edge.sihui.city/sub?token=35e40796c83ae28dbd6ec9827d4a52b4",
-  'sihui.city/home':"https://home.sihui.city/sub?token=bee79c773aade4283bd402a6b846f043",
-  'sihui.city/huahailink':"https://huahailink.sihui.city/sub?token=146251785688ba3cef4d1775979987f1",
-  'sihui.city/cmcc':"https://cmcc.sihui.city/sub?token=a35ba7ca0468fe6e48f627e598297b32",
-  'sihui.city/chinatelecom':"https://chinatelecom.sihui.city/sub?token=cb881b7611a5408a992dea3701e35a2c",
-  
-    //板块11：个人机房
-  'niclai.vip/edge':"https://edge.niclai.vip/sub?token=102b3972db4ebfa502ec57efdb326578",
-  'niclai.vip/home':"https://home.niclai.vip/sub?token=3fc946ba13c441bba4c07e33203519d0",
-  'niclai.vip/huahailink':"https://huahailink.niclai.vip/sub?token=280d70f58143817b596526e30924f0b2",
-  'niclai.vip/cmcc':"https://cmcc.niclai.vip/sub?token=a229289db582adb36dab8e214974cce4",
-  'niclai.vip/chinatelecom':"https://chinatelecom.niclai.vip/sub?token=7fbd32f00f43200cf3f917f0fc1351ad",
-  
-    //板块12：华海机房
-  'huahai.asia/edge':"https://edge.huahai.asia/sub?token=abd510540d7f4753e56a887ad3540851",
-  'huahai.asia/home':"https://home.huahai.asia/sub?token=ffe7454856d58dfe34bfab356992ad6a",
-  'huahai.asia/huahailink':"https://huahailink.huahai.asia/sub?token=bc3421f4a1149a9d1c318e502e0a0854",
-  'huahai.asia/cmcc':"https://cmcc.huahai.asia/sub?token=ec9faf2534de435aaae491a6ec1b459a",
-  'huahai.asia/chinatelecom':"https://chinatelecom.huahai.asia/sub?token=e96d6682cc858075daafd8515cf43eb8",
-  
-    //板块13：应急机房
-  'zhaoqing.icu/edge':"https://edge.zhaoqing.icu/sub?token=ee938efddaebde70ac91aea7e078cc12",
-  'zhaoqing.icu/home':"https://home.zhaoqing.icu/sub?token=60122d54cde6e9cbe6d4c623b59b6a80",
-  'zhaoqing.icu/huahailink':"https://huahailink.zhaoqing.icu/sub?token=8d5e9f5d912c3d3204d69db700dda485",
-  'zhaoqing.icu/cmcc':"https://cmcc.zhaoqing.icu/sub?token=7ee79d3c04a810906d06720c7f8f80af",
-  'zhaoqing.icu/chinatelecom':"https://chinatelecom.zhaoqing.icu/sub?token=87f3c36958ffc55dd2fcd757613f33ce",
+// 默认的初始数据（包含密码、路由映射、节点分组及条目）
+const DEFAULT_DATA = {
+  password: '123456',
+  // 路由分组/映射（包含 target 目标地址与 enabled 使能开关，默认 true）
+  routes: {
+    'zhaoqing': { target: DEFAULT_REPOSITORIES_PATH + 'station-zhaoqing.txt', enabled: true },
+    'sihui': { target: DEFAULT_REPOSITORIES_PATH + 'station-sihui.txt', enabled: true },
+    'niclai': { target: DEFAULT_REPOSITORIES_PATH + 'station-niclai.txt', enabled: true },
+    'oracle': { target: DEFAULT_REPOSITORIES_PATH + 'oracle.txt', enabled: true },
+    'oracle2': { target: DEFAULT_REPOSITORIES_PATH + 'oracle2.txt', enabled: true },
+    'NicholasLai': { target: DEFAULT_REPOSITORIES_PATH + 'allnodes.txt', enabled: true },
+    'allnodes': { target: DEFAULT_REPOSITORIES_PATH + 'allnodes.txt', enabled: true },
+    'auto': { target: DEFAULT_REPOSITORIES_PATH + 'auto.txt', enabled: true }
+  },
+  // 节点分组及条目（用于主页呈现页面的排版与显示）
+  groups: [
+    {
+      id: 'g1',
+      name: '默认分组',
+      color: '#f6821f',
+      show: true,
+      items: [
+        { name: 'zhaoqing', path: 'zhaoqing', show: true },
+        { name: 'sihui', path: 'sihui', show: true },
+        { name: 'niclai', path: 'niclai', show: true },
+        { name: 'oracle', path: 'oracle', show: true },
+        { name: 'oracle2', path: 'oracle2', show: true },
+        { name: 'NicholasLai', path: 'NicholasLai', show: true },
+        { name: 'allnodes', path: 'allnodes', show: true },
+        { name: 'auto', path: 'auto', show: true }
+      ]
+    }
+  ]
 };
+
+async function getStoredData(KV) {
+  if (!KV) return DEFAULT_DATA;
+  const data = await KV.get('app_config', 'json');
+  if (!data) {
+    await KV.put('app_config', JSON.stringify(DEFAULT_DATA));
+    return DEFAULT_DATA;
+  }
+  // 兼容旧版纯字符串路由数据结构，自动升级为对象
+  for (const k in data.routes) {
+    if (typeof data.routes[k] === 'string') {
+      data.routes[k] = { target: data.routes[k], enabled: true };
+    }
+  }
+  return data;
+}
+
+async function saveStoredData(KV, data) {
+  if (KV) {
+    await KV.put('app_config', JSON.stringify(data));
+  }
+}
+
+function checkAuth(request) {
+  const cookie = request.headers.get('Cookie') || '';
+  return cookie.includes('auth_session=true');
+}
 
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const hostname = url.hostname;
-    
-    // 1. 动态提取根域名
-    const hostParts = hostname.split('.');
-    const rootDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : hostname;
-    const mainRedirectTarget = `https://www.${rootDomain}`;
+    try {
+      const url = new URL(request.url);
+      const key = url.pathname.replace(/^\/+|\/+$/g, '');
+      const KV = env.KV;
+      const data = await getStoredData(KV);
 
-    let key = url.pathname.replace(/^\/+|\/+$/g, '');
-
-    // ---- 新增：CORS 代理端点 ----
-    if (key === 'proxy') {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) {
-        return new Response('Missing url parameter', { status: 400 });
-      }
-
-      // 简单的安全校验：只允许代理 MAPPINGS 中已配置的地址
-      const allowedUrls = Object.values(MAPPINGS);
-      if (!allowedUrls.includes(targetUrl)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-
-      try {
-        const response = await fetch(targetUrl);
-        const text = await response.text();
-        return new Response(text, {
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin": "*",   // 关键：允许前端跨域读取
+      // 1. 登录页与登录接口
+      if (key === 'login') {
+        if (request.method === 'POST') {
+          const formData = await request.formData();
+          const pwd = formData.get('password');
+          if (pwd === (data.password || '123456')) {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                'Location': '/admin',
+                'Set-Cookie': 'auth_session=true; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400'
+              }
+            });
           }
-        });
-      } catch (e) {
-        return new Response('Proxy error', { status: 502 });
+          return new Response(renderLogin('密码错误'), { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+        return new Response(renderLogin(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
-    }
 
-    // 2. 入口Token
-    if (key === "Agedmonk" || key === "NicholasLai") {
-      return new Response(getHtmlPage(hostname, MAPPINGS), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
+      // 2. 后台设置页面
+      if (key === 'admin') {
+        if (!checkAuth(request)) {
+          return Response.redirect(new URL('/login', request.url), 302);
+        }
+        
+        if (request.method === 'POST') {
+          const body = await request.json();
+          
+          if (body.action === 'save') {
+            data.groups = body.groups;
+            data.routes = body.routes;
+            if (body.password) data.password = body.password;
+            await saveStoredData(KV, data);
+            return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+          }
+          
+          if (body.action === 'backup') {
+            const now = new Date();
+            const dateStr = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+            const backupName = `nodesbackup_${dateStr}`;
+            if (KV) {
+              await KV.put(backupName, JSON.stringify(data));
+            }
+            return new Response(JSON.stringify({ success: true, name: backupName }), { headers: { 'Content-Type': 'application/json' } });
+          }
+          
+          if (body.action === 'restore') {
+            if (KV) {
+              const val = await KV.get(body.name, 'json');
+              if (val) {
+                await KV.put('app_config', JSON.stringify(val));
+                return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
+              }
+            }
+            return new Response(JSON.stringify({ success: false, error: '备份不存在' }), { headers: { 'Content-Type': 'application/json' } });
+          }
+        }
 
-    // 3. 智能快捷补全
-    if (['niclai', 'edge', 'station', 'ss', 'freechina', 'bpb'].includes(key)) {
-      key = `${key}/${rootDomain}`;
-    }
+        let backups = [];
+        if (KV) {
+          const list = await KV.list({ prefix: 'nodesbackup_' });
+          backups = list.keys.map(k => k.name).sort().reverse();
+        }
+        return new Response(renderAdmin(data, backups), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
 
-    // 4. 匹配到节点：返回 302 重定向到真实地址（用于直接订阅）
-    if (key in MAPPINGS) {
-      return Response.redirect(MAPPINGS[key], 302);
-    }
+      // 3. KV 快捷连接入口
+      if (key === 'KV') {
+        return Response.redirect(new URL('/admin', request.url), 302);
+      }
 
-    // 5. 最终防线
-    return Response.redirect(mainRedirectTarget, 302);
+      // 4. 原有业务：SS 链接重定向
+      if (key === 'ss') {
+        return Response.redirect('https://ss.niclai.vip/sub/226279dd-28b2-4b61-96be-a2a0b1afd522', 302);
+      }
+
+      // 5. 动态路由转发（校验是否存在且处于 enabled 状态）
+      if (key in data.routes) {
+        const routeObj = data.routes[key];
+        if (!routeObj || routeObj.enabled === false) {
+          return new Response('Route Disabled or Not Found', { status: 403 });
+        }
+
+        const target = routeObj.target;
+        const upstream = await fetch(target, {
+          method: 'GET',
+          headers: { 'Accept': 'text/plain, */*;q=0.1' },
+          cf: { cacheTtl: 60, cacheEverything: true }
+        });
+
+        const body = await upstream.text();
+        const headers = new Headers();
+        headers.set('Content-Type', 'text/plain; charset=utf-8');
+        headers.set('Cache-Control', 'public, max-age=60');
+
+        return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers });
+      }
+
+      // 6. 主页呈现页
+      if (key === '') {
+        return new Response(renderHome(data), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
+
+      // 7. 默认外部跳转
+      return Response.redirect('https://www.niclai.vip', 302);
+
+    } catch (err) {
+      return new Response('Internal Error: ' + String(err), { status: 500 });
+    }
   }
 };
 
-function getHtmlPage(domain, mappings) {
-  const mappingsJson = JSON.stringify(mappings);
-
+function renderLogin(error = '') {
   return `<!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-    <title>全球机房 | ${domain}</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: -apple-system, system-ui, sans-serif; background-color: #f4f4f4; text-align: center; margin: 0; padding: 20px 10px; }
-        .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; box-shadow: 0px 4px 15px rgba(0,0,0,0.1); border-radius: 15px; }
-        h2 { color: #333; }
-        .group-container { border: 1px solid #eee; padding: 15px; margin-bottom: 20px; border-radius: 12px; background: #fff; }
-        .group-title { font-size: 16px; font-weight: bold; color: #555; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; }
-        .group-title::before, .group-title::after { content: ""; flex: 1; height: 1px; background: #eee; margin: 0 10px; }
-        .btn-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-        button { width: 30%; min-width: 90px; padding: 10px 5px; border: none; color: white; font-size: 12px; cursor: pointer; border-radius: 6px; }
-        .green { background-color: #28a745; } .orange { background-color: #fd7e14; } .red { background-color: #dc3545; } .blue { background-color: #007bff; } .purple { background-color: #6f42c1; } .teal { background-color: #20c997; }
-        .yellow { background-color: #e8a600; width: 85%; margin-top: 15px; font-weight: bold; }.indigo { background-color: #6610f2; }.slate { background-color: #495057; }.pink { background-color: #e83e8c; }
-        .output { background: #eee; color: #333; padding: 12px; margin-top: 15px; white-space: pre-wrap; word-wrap: break-word; min-height: 50px; border-radius: 5px; text-align: left; font-size: 13px; }
-        #customAlert { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 12px 25px; border-radius: 30px; color: white; display: none; z-index: 1000; box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .linkUrl-box { background: #e9ecef; color: #495057; padding: 10px; margin-top: 10px; border-radius: 5px; font-size: 12px; width: 100%; word-break: break-all; text-align: left; }
-    </style>
+  <meta charset="UTF-8">
+  <title>登录 - Cloudflare</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f3f3f3; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+    .login-card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 320px; border-top: 4px solid #f6821f; }
+    h2 { margin-top: 0; color: #f6821f; font-size: 24px; text-align: center; margin-bottom: 24px; }
+    input { width: 100%; padding: 10px; margin-bottom: 16px; border: 1px solid #d9d9d9; border-radius: 4px; box-sizing: border-box; }
+    button { width: 100%; background: #f6821f; color: white; border: none; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+    button:hover { background: #e07218; }
+    .error { color: #d93838; font-size: 14px; margin-bottom: 12px; text-align: center; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h2>全球机房</h2>
-		
-        <div style="color: #888; margin-bottom: 20px;">正在访问: ${domain}</div>
-		
-        <div class="group-container"><div class="group-title">日常连接</div><div class="btn-grid">         
-          <button class="pink" onclick="fetchData('niclai/chinatelecom')">电信网络</button>
-		  <button class="pink" onclick="fetchData('niclai/cmcc')">移动网络</button>
-          <button class="pink" onclick="fetchData('niclai/huahailink')">工作网络</button>
-		  <button class="pink" onclick="fetchData('niclai/home')">家庭网络</button>
-		  <button class="pink" onclick="fetchData('/edge/maoming.city')">边缘网络</button>
-		  <button class="pink" onclick="fetchData('/ss/zhaoqing.icu')">应急网络</button>
-        </div></div>		
-        <div class="group-container"><div class="group-title">隧道连接</div><div class="btn-grid">
-          <button class="green" onclick="fetchData('/edge/niclai.vip')">个人机房</button>
-          <button class="green" onclick="fetchData('/edge/zhaoqing.city')">肇庆机房</button>
-          <button class="green" onclick="fetchData('/edge/qingyuan.city')">清远机房</button>
-          <button class="green" onclick="fetchData('/edge/sihui.city')">四会机房</button>
-		  <button class="green" onclick="fetchData('/edge/maoming.city')">茂名机房</button>
-          <button class="green" onclick="fetchData('/edge/zhaoqing.icu')">肇庆应急</button>
-        </div></div>
-		<div class="group-container"><div class="group-title">影子连接</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('/ss/niclai.vip')">个人机房</button>
-          <button class="blue" onclick="fetchData('/ss/zhaoqing.city')">肇庆机房</button>
-          <button class="blue" onclick="fetchData('/ss/qingyuan.city')">清远机房</button>
-          <button class="blue" onclick="fetchData('/ss/sihui.city')">四会机房</button>
-		  <button class="blue" onclick="fetchData('/ss/maoming.city')">茂名机房</button>
-          <button class="blue" onclick="fetchData('/ss/zhaoqing.icu')">肇庆应急</button>
-        </div></div>
-		<div class="group-container"><div class="group-title">自由中国</div><div class="btn-grid">
-          <button class="purple" onclick="fetchData('/freechina/niclai.vip')">个人机房</button>
-          <button class="purple" onclick="fetchData('/freechina/zhaoqing.city')">肇庆机房</button>
-          <button class="purple" onclick="fetchData('/freechina/qingyuan.city')">清远机房</button>
-          <button class="purple" onclick="fetchData('/freechina/sihui.city')">四会机房</button>
-		  <button class="purple" onclick="fetchData('/freechina/maoming.city')">茂名机房</button>
-          <button class="purple" onclick="fetchData('/freechina/zhaoqing.icu')">肇庆应急</button>
-        </div></div>
-		<div class="group-container"><div class="group-title">实时连接</div><div class="btn-grid">
-          <button class="orange" onclick="fetchData('/bpb/niclai.vip')">个人机房</button>
-          <button class="orange" onclick="fetchData('/bpb/zhaoqing.city')">肇庆机房</button>
-          <button class="orange" onclick="fetchData('/bpb/qingyuan.city')">清远机房</button>
-          <button class="orange" onclick="fetchData('/bpb/sihui.city')">四会机房</button>
-		  <button class="orange" onclick="fetchData('/bpb/maoming.city')">茂名机房</button>
-          <button class="orange" onclick="fetchData('/bpb/zhaoqing.icu')">肇庆应急</button>
-        </div></div>
-        <div class="group-container"><div class="group-title">基地连接</div><div class="btn-grid">
-          <button class="red" onclick="fetchData('station/home')">移动机房</button>
-          <button class="red" onclick="fetchData('station/chinatelecom')">电信机房</button>
-          <button class="red" onclick="fetchData('station/huahailink')">工作网络</button>
-          <button class="red" onclick="fetchData('station/niclai')">个人机房</button>
-          <button class="red" onclick="fetchData('station/zhaoqing')">肇庆机房</button>
-          <button class="red" onclick="fetchData('station/oracle')">大阪机房</button>
-          <button class="red" onclick="fetchData('station/sihui')">四会机房</button>
-          <button class="red" onclick="fetchData('station/auto')">最新数据</button>
-          <button class="red" onclick="fetchData('station/allnodes')">全部机房</button>
-        </div></div>      
-		
-		<div class="group-container"><div class="group-title">清远机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('qingyuan.city/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('qingyuan.city/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('qingyuan.city/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('qingyuan.city/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('qingyuan.city/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/qingyuan.city')">影子网络</button>
-        </div></div>
+  <div class="login-card">
+    <h2>Cloudflare</h2>
+    ${error ? `<div class="error">${error}</div>` : ''}
+    <form method="POST">
+      <input type="password" name="password" placeholder="请输入密码 (默认123456)" required autofocus>
+      <button type="submit">登录</button>
+    </form>
+  </div>
+</body>
+</html>`;
+}
 
-		<div class="group-container"><div class="group-title">肇庆机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('zhaoqing.city/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.city/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.city/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.city/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('zhaoqing.city/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/zhaoqing.city')">影子网络</button>
-        </div></div>
+function renderHome(data) {
+  let groupsHtml = '';
+  data.groups.forEach(g => {
+    if (!g.show) return;
+    let itemsHtml = '';
+    g.items.forEach(i => {
+      if (!i.show) return;
+      // 可选：如果该路由被禁用，呈现页可以不展示或照常展示
+      itemsHtml += `<a class="node-item" href="/${i.path}">${i.name}</a>`;
+    });
+    if (itemsHtml) {
+      groupsHtml += `
+        <div class="group-box" style="border-left-color: ${g.color || '#f6821f'}">
+          <h3 style="color: ${g.color || '#f6821f'}">${g.name}</h3>
+          <div class="nodes-grid">${itemsHtml}</div>
+        </div>`;
+    }
+  });
 
-		<div class="group-container"><div class="group-title">茂名机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('maoming.city/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('maoming.city/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('maoming.city/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('maoming.city/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('maoming.city/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/maoming.city')">影子网络</button>
-        </div></div>
-		
-		<div class="group-container"><div class="group-title">四会机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('sihui.city/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('sihui.city/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('sihui.city/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('sihui.city/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('sihui.city/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/sihui.city')">影子网络</button>
-        </div></div>
-		
-		<div class="group-container"><div class="group-title">个人机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('niclai.vip/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('niclai.vip/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('niclai.vip/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('niclai.vip/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('niclai.vip/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/niclai.vip')">影子网络</button>
-        </div></div>
-		
-		<div class="group-container"><div class="group-title">华海机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('huahai.asia/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('huahai.asia/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('huahai.asia/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('huahai.asia/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('huahai.asia/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/huahai.asia')">影子网络</button>
-        </div></div>
-		
-		<div class="group-container"><div class="group-title">应急机房</div><div class="btn-grid">
-          <button class="blue" onclick="fetchData('zhaoqing.icu/edge')">边缘网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.icu/home')">家庭网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.icu/huhailink')">工作网络</button>
-          <button class="blue" onclick="fetchData('zhaoqing.icu/cmcc)">移动网络</button>
-		  <button class="blue" onclick="fetchData('zhaoqing.icu/chinatelecom')">电信网络</button>
-		  <button class="blue" onclick="fetchData('ss/zhaoqing.icu')">影子网络</button>
-        </div></div>
-		
-        <div class="group-container"><div class="group-title">订阅链接</div><div class="btn-grid">
-          <button class="teal" onclick="copyUrl()" style="width: 80%;">复制上方选中节点的订阅链接</button>
-          <div class="linkUrl-box" id="linkUrl">点击任意节点获取当前域名订阅链接...</div>
-        </div></div>
-        <div class="group-container"><div class="group-title">实际地址</div><div class="btn-grid">
-          <button class="teal" onclick="copySourceUrl()" style="width: 80%;">复制上方选中节点的实际地址</button>
-          <div class="linkUrl-box" id="sourceUrl">点击任意节点获取真实地址...</div>
-        </div></div>
-        <div class="group-container"><div class="group-title">节点内容</div><div class="btn-grid">
-			<button class="teal" onclick="copyText()" style="width: 80%;">复制上方选中节点的具体内容</button>
-			<div class="linkUrl-box" id="output">点击任意节点获取内容...</div>
-		</div></div>
-    </div>
-    <div id="customAlert"></div>
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>节点路由中心</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f7f9fa; color: #333; margin: 0; padding: 40px 20px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #e1e4e8; padding-bottom: 15px; }
+    h1 { margin: 0; font-size: 24px; color: #f6821f; }
+    .admin-link { color: #666; text-decoration: none; font-size: 14px; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; }
+    .admin-link:hover { background: #f3f4f6; color: #f6821f; border-color: #f6821f; }
+    .group-box { background: white; border: 1px solid #e1e4e8; border-left-width: 6px; border-radius: 6px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+    .group-box h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; }
+    .nodes-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .node-item { background: #f3f4f6; color: #1f2937; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 14px; border: 1px solid #e5e7eb; transition: all 0.2s; }
+    .node-item:hover { background: #f6821f; color: white; border-color: #f6821f; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Cloudflare 节点导航</h1>
+      <a class="admin-link" href="/admin">进入管理后台</a>
+    </header>
+    <main>
+      ${groupsHtml || '<p style="text-align:center; color:#888;">暂无显示的分组或节点</p>'}
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
+function renderAdmin(data, backups) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>控制面板 - Cloudflare 管理</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fafafa; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 950px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    h1 { color: #f6821f; font-size: 22px; margin-top: 0; display: flex; justify-content: space-between; align-items: center; }
+    .toolbar { background: #fff8f3; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid #fdecd2; }
+    button { background: #f6821f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    button:hover { background: #e07218; }
+    button.secondary { background: #666; }
+    button.secondary:hover { background: #444; }
+    button.danger { background: #d93838; }
+    button.danger:hover { background: #b82b2b; }
+    .section-title { font-size: 16px; font-weight: bold; margin: 20px 0 10px; border-bottom: 2px solid #f6821f; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+    .group-card { background: #fff; border: 1px solid #e1e1e1; border-left-width: 6px; border-radius: 6px; margin-bottom: 15px; padding: 15px; }
+    .group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
+    .item-row, .route-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; background: #f9f9f9; padding: 8px; border-radius: 4px; }
+    input[type="text"], input[type="password"] { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    input[type="color"] { border: none; width: 30px; height: 26px; cursor: pointer; background: none; }
+    label { font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+    select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+    .back-home { color: #f6821f; text-decoration: none; font-size: 14px; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>
+      <span>Cloudflare 节点与路由管理面板</span>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <a class="back-home" href="/" target="_blank">查看主页</a>
+        <button onclick="saveAll()">保存全部修改</button>
+      </div>
+    </h1>
     
-    <script>
-        const FRONTEND_MAPPINGS = ${mappingsJson};
+    <div class="toolbar">
+      <strong>KV 数据备份与传导：</strong>
+      <button onclick="doBackup()">备份到KV</button>
+      <select id="backupSelect">
+        ${backups.map(b => `<option value="${b}">${b}</option>`).join('')}
+      </select>
+      <button class="secondary" onclick="doRestore()">恢复所选备份</button>
+      <button class="secondary" onclick="exportJSON()">导出配置</button>
+      <button class="secondary" onclick="document.getElementById('importFile').click()">导入配置</button>
+      <input type="file" id="importFile" style="display:none" onchange="importJSON(event)">
+      <div style="margin-left:auto;">
+        修改密码：<input type="password" id="newPassword" placeholder="留空则不改" style="width:100px;">
+      </div>
+    </div>
 
-        function copyUrl() {
-            const t = document.getElementById('linkUrl').textContent;
-            if(!t || t.includes('点击')) return;
-            navigator.clipboard.writeText(t).then(() => {
-                const a = document.getElementById('customAlert');
-                a.textContent = "订阅地址已复制"; a.style.background = "#28a745"; a.style.display = "block";
-                setTimeout(() => a.style.display = "none", 2000);
-            });
-        }
+    <!-- 一、节点分组及条目管理 -->
+    <div class="section-title">
+      <span>一、节点分组及条目管理（主页展示）</span>
+      <button onclick="addGroup()">+ 添加分组</button>
+    </div>
+    <div id="groupsContainer"></div>
+
+    <!-- 二、路由分组及条目管理 (API 映射) -->
+    <div class="section-title">
+      <span>二、路由映射管理（API/链接获取源）</span>
+      <button onclick="addRoute()">+ 添加路由映射</button>
+    </div>
+    <div id="routesContainer"></div>
+  </div>
+
+  <script>
+    let appData = ${JSON.stringify(data)};
+    if (!appData.routes) appData.routes = {};
+
+    function render() {
+      renderGroups();
+      renderRoutes();
+    }
+
+    function renderGroups() {
+      const container = document.getElementById('groupsContainer');
+      container.innerHTML = '';
+      
+      appData.groups.forEach((g, gIdx) => {
+        const card = document.createElement('div');
+        card.className = 'group-card';
+        card.style.borderLeftColor = g.color || '#f6821f';
         
-        function copySourceUrl() {
-            const t = document.getElementById('sourceUrl').textContent;
-            if(!t || t.includes('点击') || t.includes('未在配置中找到')) return;
-            navigator.clipboard.writeText(t).then(() => {
-                const a = document.getElementById('customAlert');
-                a.textContent = "实际地址已复制"; a.style.background = "#28a745"; a.style.display = "block";
-                setTimeout(() => a.style.display = "none", 2000);
-            });
-        }
+        card.innerHTML = \`
+          <div class="group-header">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input type="color" value="\${g.color || '#f6821f'}" onchange="updateGroupProp(\${gIdx}, 'color', this.value)" title="点击选择边框色调">
+              <input type="text" value="\${g.name}" oninput="updateGroupProp(\${gIdx}, 'name', this.value)" placeholder="分组名称" style="font-weight:bold;">
+              <label><input type="checkbox" \${g.show ? 'checked' : ''} onchange="updateGroupProp(\${gIdx}, 'show', this.checked)"> 显示</label>
+            </div>
+            <div style="display:flex; gap:4px;">
+              \${gIdx > 0 ? \`<button class="secondary" onclick="moveGroup(\${gIdx}, -1)">↑</button>\` : ''}
+              \${gIdx < appData.groups.length - 1 ? \`<button class="secondary" onclick="moveGroup(\${gIdx}, 1)">↓</button>\` : ''}
+              <button class="danger" onclick="deleteGroup(\${gIdx})">删除分组</button>
+            </div>
+          </div>
+          <div class="items-list" id="items-\${gIdx}"></div>
+          <div style="margin-top:8px;">
+            <button style="font-size:12px; padding:4px 8px;" onclick="addItem(\${gIdx})">+ 添加条目</button>
+          </div>
+        \`;
         
-        async function fetchData(p) {
-            const o = document.getElementById('output');
-            const linkBox = document.getElementById('linkUrl');
-            const sourceBox = document.getElementById('sourceUrl');
+        const itemsList = card.querySelector('#items-' + gIdx);
+        g.items.forEach((item, iIdx) => {
+          const row = document.createElement('div');
+          row.className = 'item-row';
+          row.innerHTML = \`
+            <input type="text" value="\${item.name}" placeholder="条目名称" oninput="updateItemProp(\${gIdx}, \${iIdx}, 'name', this.value)">
+            <input type="text" value="\${item.path}" placeholder="对应路由路径 (如 zhaoqing)" oninput="updateItemProp(\${gIdx}, \${iIdx}, 'path', this.value)" style="flex:1;">
+            <label><input type="checkbox" \${item.show ? 'checked' : ''} onchange="updateItemProp(\${gIdx}, \${iIdx}, 'show', this.checked)"> 显示</label>
+            <div style="display:flex; gap:4px;">
+              \${iIdx > 0 ? \`<button class="secondary" style="padding:2px 6px;" onclick="moveItem(\${gIdx}, \${iIdx}, -1)">↑</button>\` : ''}
+              \${iIdx < g.items.length - 1 ? \`<button class="secondary" style="padding:2px 6px;" onclick="moveItem(\${gIdx}, \${iIdx}, 1)">↓</button>\` : ''}
+              <button class="danger" style="padding:2px 6px;" onclick="deleteItem(\${gIdx}, \${iIdx})">删除</button>
+            </div>
+          \`;
+          itemsList.appendChild(row);
+        });
+        
+        container.appendChild(card);
+      });
+    }
 
-            const key = p.replace(/^\\/+/, '');
-            const subUrl = window.location.origin + '/' + key;
-            linkBox.textContent = subUrl;
+    function renderRoutes() {
+      const container = document.getElementById('routesContainer');
+      container.innerHTML = '';
+      
+      const routeKeys = Object.keys(appData.routes);
+      routeKeys.forEach((key, rIdx) => {
+        const routeObj = appData.routes[key];
+        const targetVal = typeof routeObj === 'object' ? routeObj.target : routeObj;
+        const isEnabled = typeof routeObj === 'object' ? (routeObj.enabled !== false) : true;
 
-            if(FRONTEND_MAPPINGS[key]) {
-                 sourceBox.textContent = FRONTEND_MAPPINGS[key];
-            } else {
-                 sourceBox.textContent = "未在配置中找到此链接";
-            }
+        const row = document.createElement('div');
+        row.className = 'route-row';
+        row.innerHTML = \`
+          <input type="text" value="\${key}" placeholder="路径 Key (如 zhaoqing)" onchange="updateRouteKey('\${key}', this.value)" style="width:160px;">
+          <input type="text" value="\${targetVal}" placeholder="远程节点连接/API地址 (URL)" oninput="appData.routes['\${key}'].target = this.value" style="flex:1;">
+          <label><input type="checkbox" \${isEnabled ? 'checked' : ''} onchange="appData.routes['\${key}'].enabled = this.checked"> 启用</label>
+          <button class="danger" style="padding:4px 8px;" onclick="deleteRoute('\${key}')">删除</button>
+        \`;
+        container.appendChild(row);
+      });
+    }
 
-            o.textContent = "节点内容获取中...";
-            try {
-                const realUrl = FRONTEND_MAPPINGS[key];
-                if (!realUrl) {
-                    o.textContent = "未在配置中找到对应的真实地址";
-                    return;
-                }
-                // 改为通过 Worker 代理端点获取，解决跨域
-                const proxyUrl = window.location.origin + '/proxy?url=' + encodeURIComponent(realUrl);
-                const r = await fetch(proxyUrl);
-                if (!r.ok) {
-                    o.textContent = "请求失败，状态码: " + r.status;
-                    return;
-                }
-                o.textContent = await r.text();
-            }
-            catch(e) {
-                o.textContent = "内容获取失败，请刷新重试";
-            }
+    function updateGroupProp(gIdx, prop, val) { appData.groups[gIdx][prop] = val; if(prop === 'color') renderGroups(); }
+    function updateItemProp(gIdx, iIdx, prop, val) { appData.groups[gIdx].items[iIdx][prop] = val; }
+    
+    function addGroup() {
+      appData.groups.push({ id: 'g_' + Date.now(), name: '新分组', color: '#3b82f6', show: true, items: [] });
+      renderGroups();
+    }
+    function deleteGroup(gIdx) { if(confirm('确定删除该分组吗？')) { appData.groups.splice(gIdx, 1); renderGroups(); } }
+    
+    function addItem(gIdx) {
+      appData.groups[gIdx].items.push({ name: '', path: '', show: true });
+      renderGroups();
+    }
+    function deleteItem(gIdx, iIdx) { appData.groups[gIdx].items.splice(iIdx, 1); renderGroups(); }
+
+    function moveGroup(idx, dir) {
+      const target = idx + dir;
+      const temp = appData.groups[idx];
+      appData.groups[idx] = appData.groups[target];
+      appData.groups[target] = temp;
+      renderGroups();
+    }
+
+    function moveItem(gIdx, idx, dir) {
+      const items = appData.groups[gIdx].items;
+      const target = idx + dir;
+      const temp = items[idx];
+      items[idx] = items[target];
+      items[target] = temp;
+      renderGroups();
+    }
+
+    function addRoute() {
+      let newKey = 'new_path_' + Date.now().toString().slice(-4);
+      appData.routes[newKey] = { target: 'https://', enabled: true };
+      renderRoutes();
+    }
+
+    function updateRouteKey(oldKey, newKey) {
+      newKey = newKey.trim();
+      if (!newKey || oldKey === newKey) return;
+      if (appData.routes[newKey]) {
+        alert('该路径 Key 已存在！');
+        renderRoutes();
+        return;
+      }
+      appData.routes[newKey] = appData.routes[oldKey];
+      delete appData.routes[oldKey];
+      renderRoutes();
+    }
+
+    function deleteRoute(key) {
+      if (confirm('确定删除路由映射 [' + key + '] 吗？')) {
+        delete appData.routes[key];
+        renderRoutes();
+      }
+    }
+
+    async function saveAll() {
+      const pwd = document.getElementById('newPassword').value;
+      const payload = { action: 'save', groups: appData.groups, routes: appData.routes };
+      if (pwd) payload.password = pwd;
+      
+      const res = await fetch('/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.success) alert('保存成功！所有配置已写入 KV。');
+      else alert('保存失败');
+    }
+
+    async function doBackup() {
+      const res = await fetch('/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'backup' })
+      });
+      const json = await res.json();
+      if (json.success) {
+        alert('备份成功: ' + json.name);
+        location.reload();
+      } else alert('备份失败');
+    }
+
+    async function doRestore() {
+      const name = document.getElementById('backupSelect').value;
+      if (!name) return alert('请先选择一个备份文件');
+      if (!confirm('确定要恢复备份 [' + name + '] 吗？当前未保存的修改将被覆盖。')) return;
+      
+      const res = await fetch('/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore', name })
+      });
+      const json = await res.json();
+      if (json.success) {
+        alert('恢复成功！');
+        location.reload();
+      } else alert('恢复失败');
+    }
+
+    function exportJSON() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
+      const dlAnchor = document.createElement('a');
+      dlAnchor.setAttribute("href", dataStr);
+      dlAnchor.setAttribute("download", "nodes_and_routes_export.json");
+      document.body.appendChild(dlAnchor);
+      dlAnchor.click();
+      dlAnchor.remove();
+    }
+
+    function importJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (parsed.groups && parsed.routes) {
+            appData = parsed;
+            render();
+            alert('导入成功，请点击右上角“保存全部修改”将数据写入 KV！');
+          } else {
+            alert('文件格式错误（必须包含 groups 和 routes）');
+          }
+        } catch(err) {
+          alert('解析 JSON 失败');
         }
+      };
+      reader.readAsText(file);
+    }
 
-        function copyText() {
-            const t = document.getElementById('output').textContent;
-            if(!t || t.includes('获取中')) return;
-            navigator.clipboard.writeText(t).then(() => {
-                const a = document.getElementById('customAlert');
-                a.textContent = "节点内容已复制"; a.style.background = "#28a745"; a.style.display = "block";
-                setTimeout(() => a.style.display = "none", 2000);
-            });
-        }
-    </script>
+    render();
+  </script>
 </body>
 </html>`;
 }
