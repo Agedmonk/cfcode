@@ -348,7 +348,6 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
-    /* 重点修正：为 icon-btn 强制规定 min-height 和 min-width，抵抗外层 button 的 min-height 干扰 */
     .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #e2e8f0; transition: all 0.2s; }
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); border-color: #cbd5e1; }
     
@@ -362,12 +361,20 @@ function getAdminPage() {
     .color-swatch { width: 30px; height: 30px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,0.05); transition: 0.2s; }
     .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     
+    /* 横向跨越：让复选框与按钮区域在手机端横跨整行 */
     .item-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; padding: 12px 15px; border-bottom: 1px solid #f1f2f6; align-items: center; }
     .item-row input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
     .item-row .target-input { grid-column: 1 / -1; }
-    @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1fr 2fr auto; } .item-row .target-input { grid-column: auto; } }
+    .item-row .item-actions { grid-column: 1 / -1; } /* 确保手机端横跨整行，不受上方 input 挤压 */
     
-    .item-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; }
+    @media(min-width: 800px) { 
+        .item-row { grid-template-columns: 1fr 1fr 2fr auto; } 
+        .item-row .target-input { grid-column: auto; } 
+        .item-row .item-actions { grid-column: auto; }
+    }
+    
+    /* 重点修正：利用 flex-wrap: nowrap 强制在一行，通过 overflow-x: auto 允许极端窄屏下左右滑动，拒绝换行 */
+    .item-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
     
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
@@ -486,9 +493,11 @@ function getAdminPage() {
             <div class="item-actions">
               <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显示</label>
               <label style="font-size:14px; display:flex; align-items:center; gap:4px; cursor:pointer; margin:0;"><input type="checkbox" style="transform:scale(1.1); margin:0;" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启用</label>
-              <button class="icon-btn" style="margin-left:4px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
-              <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
-              <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              <div style="display:flex; gap:8px;">
+                  <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+                  <button class="icon-btn" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+                  <button class="icon-btn" style="color:#EF4444; border-color:#FCA5A5; background:#FEF2F2;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
+              </div>
             </div>
           </div>\`;
         });
