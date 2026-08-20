@@ -355,14 +355,12 @@ function getAdminPage() {
     .group-card.expanded .g-body { display: block; }
     .group-card.expanded .arrow-btn svg { transform: rotate(180deg); }
     
-    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; }
+    .icon-btn { background: #f1f5f9; color: #475569; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
     .icon-btn:hover { background: #e2e8f0; color: var(--p-blue); }
     
-    /* 颜色选择器组件优化: 改为 flex 布局并固定宽度以自适应极窄屏幕 */
     .color-picker { position: relative; }
     .current-color { width: 36px; height: 36px; border-radius: 8px; cursor: pointer; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
-    .picker-grid { display: none; position: absolute; top: 45px; left: 0; width: 270px; background: #fff; border: 1px solid var(--border); padding: 12px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); display: flex; flex-wrap: wrap; gap: 6px; z-index: 50; }
-    /* 初始化时设为 display: none，被 active 激活时转为 display: flex */
+    .picker-grid { display: none; position: absolute; top: 45px; left: 0; width: 270px; background: #fff; border: 1px solid var(--border); padding: 12px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); flex-wrap: wrap; gap: 6px; z-index: 50; }
     .picker-grid { display: none !important; }
     .picker-grid.active { display: flex !important; }
     
@@ -370,7 +368,6 @@ function getAdminPage() {
     .color-swatch { width: 30px; height: 30px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,0.05); transition: 0.2s; }
     .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     
-    /* 条目设计 */
     .item-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; padding: 15px; border-bottom: 1px solid #f1f2f6; align-items: center; }
     .item-row input[type="text"] { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
     .item-row .target-input { grid-column: 1 / -1; }
@@ -424,9 +421,15 @@ function getAdminPage() {
   </div>
 
   <script>
+    const ICONS = ${JSON.stringify({
+      up: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+      down: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
+      edit: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+      del: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+    })};
+
     let configData = { groups: [] };
     
-    // 全局点击关闭颜色选择器
     document.addEventListener('click', e => {
       if(!e.target.closest('.color-picker')) {
         document.querySelectorAll('.picker-grid').forEach(el => el.classList.remove('active'));
@@ -436,7 +439,6 @@ function getAdminPage() {
     async function loadData() {
       const res = await fetch('/api/config');
       configData = await res.json();
-      // 核心需求：后台管理页强制将所有分组折叠收起
       configData.groups.forEach(g => {
          g._expanded = false; 
       });
@@ -448,7 +450,6 @@ function getAdminPage() {
       container.innerHTML = '';
       
       configData.groups.forEach((g, gIdx) => {
-        // 构建颜色选择器网格
         let colorGrid = '';
         for(let c=1; c<=32; c++) {
           colorGrid += \`<div class="color-swatch c-\${c}" onclick="updateColor(\${gIdx}, \${c})"></div>\`;
@@ -474,9 +475,9 @@ function getAdminPage() {
             <label style="font-size:14px; cursor:pointer; display:flex; align-items:center; gap:5px; margin-right:5px;">
               <input type="checkbox" style="transform:scale(1.2);" \${g.show?'checked':''} onchange="updateG(\${gIdx}, 'show', this.checked)"> 显示
             </label>
-            <button class="icon-btn" onclick="moveG(\${gIdx}, -1, event)" title="上移">⬆️</button>
-            <button class="icon-btn" onclick="moveG(\${gIdx}, 1, event)" title="下移">⬇️</button>
-            <button class="icon-btn" onclick="delG(\${gIdx}, event)" title="删除" style="color:#EF4444; background:#FEF2F2;">✖️</button>
+            <button class="icon-btn" onclick="moveG(\${gIdx}, -1, event)" title="上移">\${ICONS.up}</button>
+            <button class="icon-btn" onclick="moveG(\${gIdx}, 1, event)" title="下移">\${ICONS.down}</button>
+            <button class="icon-btn" onclick="delG(\${gIdx}, event)" title="删除" style="color:#EF4444; background:#FEF2F2;">\${ICONS.del}</button>
           </div>
         </div>
         <div class="g-body">\`;
@@ -490,9 +491,9 @@ function getAdminPage() {
             <div class="item-actions">
               <label style="font-size:13px; display:flex; align-items:center; gap:4px;"><input type="checkbox" \${item.show?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'show',this.checked)">显</label>
               <label style="font-size:13px; display:flex; align-items:center; gap:4px;"><input type="checkbox" \${item.enabled?'checked':''} onchange="updateI(\${gIdx},\${iIdx},'enabled',this.checked)">启</label>
-              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)">⬆</button>
-              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, 1)">⬇</button>
-              <button class="icon-btn" style="width:30px; height:30px; color:#EF4444;" onclick="delI(\${gIdx}, \${iIdx})">✖</button>
+              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, -1)" title="上移">\${ICONS.up}</button>
+              <button class="icon-btn" style="width:30px; height:30px;" onclick="moveI(\${gIdx}, \${iIdx}, 1)" title="下移">\${ICONS.down}</button>
+              <button class="icon-btn" style="width:30px; height:30px; color:#EF4444;" onclick="delI(\${gIdx}, \${iIdx})" title="删除">\${ICONS.del}</button>
             </div>
           </div>\`;
         });
@@ -503,7 +504,6 @@ function getAdminPage() {
       });
     }
 
-    // 后台页面手风琴切换逻辑
     function toggleCard(el, e) {
       if(['INPUT', 'BUTTON', 'SELECT', 'LABEL'].includes(e.target.tagName) || e.target.closest('.color-picker') || e.target.closest('button')) {
         return;
@@ -515,7 +515,6 @@ function getAdminPage() {
       configData.groups[gIdx]._expanded = card.classList.contains('expanded');
     }
 
-    // 数据交互逻辑 
     const updateG = (g, k, v) => configData.groups[g][k] = v;
     const updateI = (g, i, k, v) => configData.groups[g].items[i][k] = v;
     
@@ -545,7 +544,6 @@ function getAdminPage() {
       setTimeout(() => { btn.innerHTML = '🚀 保存所有更改'; btn.disabled = false; }, 2000);
     }
 
-    // KV 备份与恢复
     async function doBackup() {
       if(!confirm('是否备份当前所有配置数据？')) return;
       const r = await (await fetch('/api/backup', { method:'POST' })).json();
