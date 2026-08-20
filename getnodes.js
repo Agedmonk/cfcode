@@ -270,7 +270,7 @@ function getDisplayPage(config, domain) {
         <a href="/map" class="top-btn">🗺️路由导图</a>
         <a href="/admin" class="top-btn">⚙️后台管理</a>
         <a href="/logout" class="top-btn" style="color:var(--p-magenta)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>退出
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>退出
         </a>
       </div>
     </div>
@@ -480,12 +480,20 @@ function getAdminPage() {
     .color-swatch { width: 30px; height: 30px; border-radius: 6px; cursor: pointer; border: 1px solid rgba(0,0,0,0.05); transition: 0.2s; }
     .color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
     
-    .item-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; padding: 12px 15px; border-bottom: 1px solid #f1f2f6; align-items: center; }
+    /* 横向跨越：让复选框与按钮区域在手机端横跨整行，使用 auto-fit 保证灵活性 */
+    .item-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; padding: 12px 15px; border-bottom: 1px solid #f1f2f6; align-items: center; }
     .item-row input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
     .item-row .target-input { grid-column: 1 / -1; }
-    @media(min-width: 800px) { .item-row { grid-template-columns: 1fr 1fr 2fr auto; } .item-row .target-input { grid-column: auto; } }
+    .item-row .item-actions { grid-column: 1 / -1; } 
     
-    .item-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
+    @media(min-width: 800px) { 
+        .item-row { grid-template-columns: 1fr 1.2fr 2.5fr auto; } 
+        .item-row .target-input { grid-column: auto; } 
+        .item-row .item-actions { grid-column: auto; }
+    }
+    
+    /* 强制在任何情况下都不换行，并且允许横向滑动 */
+    .item-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding-left: 5px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
     
     .add-btn { width: calc(100% - 30px); margin: 5px 15px 15px; background: #f8fafc; border: 2px dashed #cbd5e1; padding: 12px; color: #64748b; font-size: 14px; border-radius: 10px; }
     .add-btn:hover { background: #f1f5f9; color: var(--p-blue); border-color: #94a3b8; }
