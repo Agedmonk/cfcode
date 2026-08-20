@@ -267,9 +267,9 @@ function getDisplayPage(config, domain) {
     <div class="top-header">
       <h2>🌍 全球机房节点</h2>
       <div style="display: flex; gap: 10px; justify-content: center;">
-        <a href="/map" class="top-btn">🗺️ 路由导图</a>
-        <a href="/admin" class="top-btn">⚙️ 后台管理</a>
-        <a href="/logout" class="top-btn" style="color:var(--p-magenta)">🚪 退出</a>
+        <a href="/map" class="top-btn">🗺️路由导图</a>
+        <a href="/admin" class="top-btn">⚙️节点管理</a>
+        <a href="/logout" class="top-btn" style="color:var(--p-magenta)">❌退出</a>
       </div>
     </div>
     
