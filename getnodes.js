@@ -1,552 +1,526 @@
-const DEFAULT_REPOSITORIES_PATH = 'https://raw.githubusercontent.com/LaiJunLing/team/refs/heads/main/'
+/**
+ * 全球路由管理系统
+ * 包含：登录验证、节点/路由前台展示、节点/路由后台管理、KV数据备份恢复功能
+ */
 
-// 默认的初始数据（包含密码、路由映射、节点分组及条目）
+const DEFAULT_PASSWORD = "NicholasLai";
+const KV_DATA_KEY = "KV";
+
+// 默认初始化的数据结构（保留了部分原有节点作为示例基座）
 const DEFAULT_DATA = {
-  password: 'NicholasLai',
-  // 路由分组/映射（包含 target 目标地址与 enabled 使能开关，默认 true）
-  routes: {
-    'zhaoqing': { target: DEFAULT_REPOSITORIES_PATH + 'station-zhaoqing.txt', enabled: true },
-    'sihui': { target: DEFAULT_REPOSITORIES_PATH + 'station-sihui.txt', enabled: true },
-    'niclai': { target: DEFAULT_REPOSITORIES_PATH + 'station-niclai.txt', enabled: true },
-    'oracle': { target: DEFAULT_REPOSITORIES_PATH + 'oracle.txt', enabled: true },
-    'oracle2': { target: DEFAULT_REPOSITORIES_PATH + 'oracle2.txt', enabled: true },
-    'NicholasLai': { target: DEFAULT_REPOSITORIES_PATH + 'allnodes.txt', enabled: true },
-    'allnodes': { target: DEFAULT_REPOSITORIES_PATH + 'allnodes.txt', enabled: true },
-    'auto': { target: DEFAULT_REPOSITORIES_PATH + 'auto.txt', enabled: true }
-  },
-  // 节点分组及条目（用于主页呈现页面的排版与显示）
-  groups: [
+  nodes: [
     {
-      id: 'g1',
-      name: '默认分组',
-      color: '#f6821f',
-      show: true,
+      id: "g_daily", name: "日常连接", show: true,
       items: [
-        { name: 'zhaoqing', path: 'zhaoqing', show: true },
-        { name: 'sihui', path: 'sihui', show: true },
-        { name: 'niclai', path: 'niclai', show: true },
-        { name: 'oracle', path: 'oracle', show: true },
-        { name: 'oracle2', path: 'oracle2', show: true },
-        { name: 'NicholasLai', path: 'NicholasLai', show: true },
-        { name: 'allnodes', path: 'allnodes', show: true },
-        { name: 'auto', path: 'auto', show: true }
+        { id: "n_telecom", name: "电信网络", path: "niclai/chinatelecom", url: "https://chinatelecom.qingyuan.city/sub?token=fefd7730454a1d1bf4a89b3202de3c3d", color: "pink", show: true },
+        { id: "n_cmcc", name: "移动网络", path: "niclai/cmcc", url: "https://cmcc.qingyuan.city/sub?token=df16f2c1fc47b0a4543b6c78cfe73224", color: "pink", show: true }
+      ]
+    },
+    {
+      id: "g_edge", name: "隧道连接", show: true,
+      items: [
+        { id: "n_edge_niclai", name: "个人机房", path: "edge/niclai.vip", url: "https://edge.niclai.vip/sub?token=102b3972db4ebfa502ec57efdb326578", color: "green", show: true }
+      ]
+    }
+  ],
+  routes: [
+    {
+      id: "rg_default", name: "基础路由", show: true,
+      items: [
+        { id: "r_google", name: "Google", path: "route/google", url: "https://www.google.com", color: "blue", enabled: true }
       ]
     }
   ]
 };
 
-async function getStoredData(KV) {
-  if (!KV) return DEFAULT_DATA;
-  const data = await KV.get('app_config', 'json');
-  if (!data) {
-    await KV.put('app_config', JSON.stringify(DEFAULT_DATA));
-    return DEFAULT_DATA;
-  }
-  // 兼容旧版纯字符串路由数据结构，自动升级为对象
-  for (const k in data.routes) {
-    if (typeof data.routes[k] === 'string') {
-      data.routes[k] = { target: data.routes[k], enabled: true };
-    }
-  }
-  return data;
-}
-
-async function saveStoredData(KV, data) {
-  if (KV) {
-    await KV.put('app_config', JSON.stringify(data));
-  }
-}
-
-function checkAuth(request) {
-  const cookie = request.headers.get('Cookie') || '';
-  return cookie.includes('auth_session=true');
-}
-
 export default {
   async fetch(request, env, ctx) {
-    try {
-      const url = new URL(request.url);
-      const key = url.pathname.replace(/^\/+|\/+$/g, '');
-      const KV = env.KV;
-      const data = await getStoredData(KV);
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const hostname = url.hostname;
 
-      // 1. 登录页与登录接口
-      if (key === 'login') {
-        if (request.method === 'POST') {
-          const formData = await request.formData();
-          const pwd = formData.get('password');
-          if (pwd === (data.password || '123456')) {
-            return new Response(null, {
-              status: 302,
-              headers: {
-                'Location': '/admin',
-                'Set-Cookie': 'auth_session=true; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400'
-              }
-            });
-          }
-          return new Response(renderLogin('密码错误'), { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    // === 1. 鉴权拦截 ===
+    const cookies = request.headers.get("Cookie") || "";
+    const isAuthed = cookies.includes(`cf_auth=${DEFAULT_PASSWORD}`);
+
+    if (path === "/login") {
+      if (request.method === "POST") {
+        const formData = await request.formData().catch(() => new FormData());
+        const pass = formData.get("password");
+        if (pass === DEFAULT_PASSWORD) {
+          return new Response("登录成功", {
+            status: 302,
+            headers: { "Location": "/", "Set-Cookie": `cf_auth=${DEFAULT_PASSWORD}; Path=/; HttpOnly; Max-Age=2592000; SameSite=Lax` }
+          });
         }
-        return new Response(renderLogin(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        return new Response(getLoginPage("密码错误，请重试"), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
       }
-
-      // 2. 后台设置页面
-      if (key === 'admin') {
-        if (!checkAuth(request)) {
-          return Response.redirect(new URL('/login', request.url), 302);
-        }
-        
-        if (request.method === 'POST') {
-          const body = await request.json();
-          
-          if (body.action === 'save') {
-            data.groups = body.groups;
-            data.routes = body.routes;
-            if (body.password) data.password = body.password;
-            await saveStoredData(KV, data);
-            return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
-          }
-          
-          if (body.action === 'backup') {
-            const now = new Date();
-            const dateStr = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
-            const backupName = `nodesbackup_${dateStr}`;
-            if (KV) {
-              await KV.put(backupName, JSON.stringify(data));
-            }
-            return new Response(JSON.stringify({ success: true, name: backupName }), { headers: { 'Content-Type': 'application/json' } });
-          }
-          
-          if (body.action === 'restore') {
-            if (KV) {
-              const val = await KV.get(body.name, 'json');
-              if (val) {
-                await KV.put('app_config', JSON.stringify(val));
-                return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
-              }
-            }
-            return new Response(JSON.stringify({ success: false, error: '备份不存在' }), { headers: { 'Content-Type': 'application/json' } });
-          }
-        }
-
-        let backups = [];
-        if (KV) {
-          const list = await KV.list({ prefix: 'nodesbackup_' });
-          backups = list.keys.map(k => k.name).sort().reverse();
-        }
-        return new Response(renderAdmin(data, backups), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-      }
-
-      // 3. KV 快捷连接入口
-      if (key === 'KV') {
-        return Response.redirect(new URL('/admin', request.url), 302);
-      }
-
-      // 4. 原有业务：SS 链接重定向
-      if (key === 'ss') {
-        return Response.redirect('https://ss.niclai.vip/sub/226279dd-28b2-4b61-96be-a2a0b1afd522', 302);
-      }
-
-      // 5. 动态路由转发（校验是否存在且处于 enabled 状态）
-      if (key in data.routes) {
-        const routeObj = data.routes[key];
-        if (!routeObj || routeObj.enabled === false) {
-          return new Response('Route Disabled or Not Found', { status: 403 });
-        }
-
-        const target = routeObj.target;
-        const upstream = await fetch(target, {
-          method: 'GET',
-          headers: { 'Accept': 'text/plain, */*;q=0.1' },
-          cf: { cacheTtl: 60, cacheEverything: true }
-        });
-
-        const body = await upstream.text();
-        const headers = new Headers();
-        headers.set('Content-Type', 'text/plain; charset=utf-8');
-        headers.set('Cache-Control', 'public, max-age=60');
-
-        return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers });
-      }
-
-      // 6. 主页呈现页
-      if (key === '') {
-        return new Response(renderHome(data), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-      }
-
-      // 7. 默认外部跳转
-      return Response.redirect('https://www.niclai.vip', 302);
-
-    } catch (err) {
-      return new Response('Internal Error: ' + String(err), { status: 500 });
+      return new Response(getLoginPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     }
+
+    if (path === "/logout") {
+      return new Response("已退出", { status: 302, headers: { "Location": "/login", "Set-Cookie": `cf_auth=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax` } });
+    }
+
+    // === 2. API 路由 (需鉴权) ===
+    if (path.startsWith("/api/")) {
+      if (!isAuthed) return new Response("Unauthorized", { status: 401 });
+      
+      if (path === "/api/data" && request.method === "GET") return await handleGetData(env);
+      if (path === "/api/data" && request.method === "POST") return await handleSaveData(request, env);
+      
+      if (path === "/api/backup" && request.method === "GET") return await handleListBackups(env);
+      if (path === "/api/backup" && request.method === "POST") return await handleCreateBackup(env);
+      if (path === "/api/restore" && request.method === "POST") return await handleRestoreBackup(request, env);
+      if (path === "/api/export" && request.method === "GET") return await handleExportData(env);
+      if (path === "/api/import" && request.method === "POST") return await handleImportData(request, env);
+    }
+
+    // === 3. 跨域代理端点 ===
+    if (path === "/proxy") {
+      const targetUrl = url.searchParams.get("url");
+      if (!targetUrl) return new Response('Missing url', { status: 400 });
+      try {
+        const response = await fetch(targetUrl);
+        const text = await response.text();
+        return new Response(text, {
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch (e) {
+        return new Response('Proxy error', { status: 502 });
+      }
+    }
+
+    // === 4. 获取动态数据用于重定向匹配 ===
+    let appData = DEFAULT_DATA;
+    try {
+      const raw = await env.KV.get(KV_DATA_KEY);
+      if (raw) appData = JSON.parse(raw);
+    } catch(e) {}
+
+    // === 5. 页面路由 (需鉴权) ===
+    if (path === "/" || path === "/routes" || path === "/manage-nodes" || path === "/manage-routes") {
+      if (!isAuthed) return Response.redirect(url.origin + "/login", 302);
+      return new Response(getAppPage(path, hostname, appData), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+    }
+
+    // === 6. 节点/路由快捷链接重定向 ===
+    let key = path.replace(/^\/+|\/+$/g, '');
+    const hostParts = hostname.split('.');
+    const rootDomain = hostParts.length > 2 ? hostParts.slice(-2).join('.') : hostname;
+
+    if (['niclai', 'edge', 'station', 'ss', 'freechina', 'bpb'].includes(key)) {
+      key = `${key}/${rootDomain}`;
+    }
+
+    let targetRedirect = null;
+    appData.nodes.forEach(g => g.items.forEach(i => { if (i.path === key && i.show !== false) targetRedirect = i.url; }));
+    appData.routes.forEach(g => g.items.forEach(i => { if (i.path === key && i.enabled !== false) targetRedirect = i.url; }));
+
+    if (targetRedirect) return Response.redirect(targetRedirect, 302);
+
+    // 默认防线
+    return Response.redirect(`https://www.${rootDomain}`, 302);
   }
 };
 
-function renderLogin(error = '') {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>登录 - Cloudflare</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f3f3f3; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-    .login-card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 320px; border-top: 4px solid #f6821f; }
-    h2 { margin-top: 0; color: #f6821f; font-size: 24px; text-align: center; margin-bottom: 24px; }
-    input { width: 100%; padding: 10px; margin-bottom: 16px; border: 1px solid #d9d9d9; border-radius: 4px; box-sizing: border-box; }
-    button { width: 100%; background: #f6821f; color: white; border: none; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-    button:hover { background: #e07218; }
-    .error { color: #d93838; font-size: 14px; margin-bottom: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="login-card">
-    <h2>Cloudflare</h2>
-    ${error ? `<div class="error">${error}</div>` : ''}
-    <form method="POST">
-      <input type="password" name="password" placeholder="请输入密码 (默认123456)" required autofocus>
-      <button type="submit">登录</button>
-    </form>
-  </div>
-</body>
-</html>`;
+// ==================== KV 数据管理 API ====================
+async function handleGetData(env) {
+  let data = DEFAULT_DATA;
+  const raw = await env.KV.get(KV_DATA_KEY);
+  if (raw) data = JSON.parse(raw);
+  return new Response(JSON.stringify({ success: true, data }), { headers: { "Content-Type": "application/json" } });
 }
 
-function renderHome(data) {
-  let groupsHtml = '';
-  data.groups.forEach(g => {
-    if (!g.show) return;
-    let itemsHtml = '';
+async function handleSaveData(request, env) {
+  const data = await request.json();
+  await env.KV.put(KV_DATA_KEY, JSON.stringify(data));
+  return new Response(JSON.stringify({ success: true }));
+}
+
+async function handleCreateBackup(env) {
+  const raw = await env.KV.get(KV_DATA_KEY);
+  if (!raw) return new Response(JSON.stringify({ success: false, error: "无数据可备份" }));
+  const d = new Date(); d.setTime(d.getTime() + 8 * 3600000); // 补时区
+  const pad = n => n.toString().padStart(2, '0');
+  const key = `backup_${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}_${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+  await env.KV.put(key, raw);
+  return new Response(JSON.stringify({ success: true, key }), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleListBackups(env) {
+  const listed = await env.KV.list({ prefix: "backup_" });
+  return new Response(JSON.stringify({ success: true, backups: listed.keys.map(k => k.name) }), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleRestoreBackup(request, env) {
+  const { key } = await request.json();
+  const raw = await env.KV.get(key);
+  if (raw) { await env.KV.put(KV_DATA_KEY, raw); return new Response(JSON.stringify({ success: true })); }
+  return new Response(JSON.stringify({ success: false }), { status: 404 });
+}
+
+async function handleExportData(env) {
+  const raw = await env.KV.get(KV_DATA_KEY) || JSON.stringify(DEFAULT_DATA);
+  return new Response(raw, { headers: { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="routing_system_export.json"' } });
+}
+
+async function handleImportData(request, env) {
+  const data = await request.json();
+  await env.KV.put(KV_DATA_KEY, JSON.stringify(data));
+  return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
+}
+
+
+// ==================== 共享样式 ====================
+const GLOBAL_STYLE = `
+  :root { --primary: #F6821F; --primary-hover: #e07010; --bg: #f4f4f4; --card-bg: #ffffff; --text: #333; --border: #eee; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px 10px; text-align: center; }
+  .container { max-width: 650px; margin: 0 auto; background: var(--card-bg); padding: 20px; box-shadow: 0px 4px 15px rgba(0,0,0,0.1); border-radius: 15px; text-align: left;}
+  h2 { color: #333; text-align: center; margin-bottom: 20px; }
+  
+  /* 表单与按钮 */
+  input[type="text"], input[type="password"], input[type="url"], select { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; outline: none; }
+  input:focus { border-color: var(--primary); }
+  button { border: none; border-radius: 6px; cursor: pointer; padding: 10px 15px; font-size: 13px; color: #fff; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+  .btn-primary { background: var(--primary); } .btn-primary:hover { background: var(--primary-hover); }
+  .btn-danger { background: #dc3545; }
+  .btn-icon { background: transparent; color: #666; padding: 5px; } .btn-icon:hover { color: var(--primary); background: #eee; }
+  
+  /* 前台展示页卡片 */
+  .group-container { border: 1px solid var(--border); padding: 15px; margin-bottom: 20px; border-radius: 12px; background: #fff; text-align: center; }
+  .group-title { font-size: 16px; font-weight: bold; color: #555; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; }
+  .group-title::before, .group-title::after { content: ""; flex: 1; height: 1px; background: var(--border); margin: 0 10px; }
+  .btn-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .node-btn { width: 30%; min-width: 90px; padding: 10px 5px; border-radius: 6px; color: white; font-size: 12px; }
+  
+  /* 颜色池 */
+  .green { background-color: #28a745; } .orange { background-color: #fd7e14; } .red { background-color: #dc3545; } 
+  .blue { background-color: #007bff; } .purple { background-color: #6f42c1; } .teal { background-color: #20c997; } .pink { background-color: #e83e8c; }
+  
+  /* 底部导航 */
+  .bottom-nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-top: 30px; padding-top: 15px; border-top: 1px solid var(--border); }
+  .bottom-nav a { text-decoration: none; color: #666; font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 6px; background: #f8f9fa; border: 1px solid var(--border); }
+  .bottom-nav a.active { color: var(--primary); border-color: var(--primary); background: #fff3e0; }
+  
+  /* 后台管理列表 */
+  .m-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 15px; background: #fafbfc; overflow: hidden; }
+  .m-group-header { padding: 10px 15px; background: #f1f2f6; display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+  .m-items { padding: 10px; }
+  .m-item { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--border); padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+  .m-item input[type="text"] { margin-bottom: 0; padding: 6px; }
+  .action-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+  
+  /* 模态框 */
+  .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+  .modal.active { display: flex; }
+  .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 90%; max-width: 400px; text-align: left; }
+`;
+
+const ICONS = {
+  up: '↑', down: '↓', del: '✖', add: '➕', save: '💾'
+};
+
+// ==================== 登录页 ====================
+function getLoginPage(errorMsg = "") {
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>全球路由管理系统 - 登录</title><style>${GLOBAL_STYLE}</style></head>
+  <body style="display:flex;align-items:center;height:100vh;margin:0;"><div class="container" style="max-width:350px;text-align:center;">
+    <h2 style="color:var(--primary);">全球路由管理系统</h2>
+    ${errorMsg ? `<div style="color:red;margin-bottom:15px;font-size:13px;">${errorMsg}</div>` : ''}
+    <form method="POST" action="/login">
+      <input type="password" name="password" placeholder="请输入系统密码" required autofocus>
+      <button class="btn-primary" type="submit" style="width:100%;padding:12px;font-size:15px;">登 录</button>
+    </form>
+  </div></body></html>`;
+}
+
+// ==================== 综合应用页面 ====================
+function getAppPage(currentPath, domain, appData) {
+  const isManage = currentPath.includes("manage");
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>全球路由管理系统</title><style>${GLOBAL_STYLE}</style></head><body>
+  <div class="container">
+    <h2>全球路由管理系统</h2>
+    ${isManage ? renderBackupComponent() : `<div style="color:#888; text-align:center; margin-bottom:20px;">正在访问: ${domain}</div>`}
+    
+    <div id="app-content">
+      ${currentPath === '/' ? renderDisplay(appData.nodes, 'node') : ''}
+      ${currentPath === '/routes' ? renderDisplay(appData.routes, 'route') : ''}
+      ${currentPath === '/manage-nodes' ? renderManage('nodes') : ''}
+      ${currentPath === '/manage-routes' ? renderManage('routes') : ''}
+    </div>
+
+    <div class="bottom-nav">
+      <a href="/" class="${currentPath === '/' ? 'active' : ''}">节点展示</a>
+      <a href="/routes" class="${currentPath === '/routes' ? 'active' : ''}">路由展示</a>
+      <a href="/manage-nodes" class="${currentPath === '/manage-nodes' ? 'active' : ''}">节点管理</a>
+      <a href="/manage-routes" class="${currentPath === '/manage-routes' ? 'active' : ''}">路由管理</a>
+      <a href="/logout" style="color:red;border-color:#f5c6cb;background:#f8d7da;">退出</a>
+    </div>
+  </div>
+
+  ${isManage ? renderModalsAndScripts(appData, currentPath) : renderDisplayScripts(appData)}
+  </body></html>`;
+}
+
+// --- 渲染展示页 (节点/路由共享逻辑) ---
+function renderDisplay(groups, type) {
+  let html = '';
+  groups.forEach(g => {
+    if (g.show === false) return;
+    html += `<div class="group-container"><div class="group-title">${g.name}</div><div class="btn-grid">`;
     g.items.forEach(i => {
-      if (!i.show) return;
-      // 可选：如果该路由被禁用，呈现页可以不展示或照常展示
-      itemsHtml += `<a class="node-item" href="/${i.path}">${i.name}</a>`;
+      if (type === 'node' && i.show === false) return;
+      if (type === 'route' && i.enabled === false) return;
+      html += `<button class="node-btn ${i.color || 'blue'}" onclick="fetchData('${i.path}')">${i.name}</button>`;
     });
-    if (itemsHtml) {
-      groupsHtml += `
-        <div class="group-box" style="border-left-color: ${g.color || '#f6821f'}">
-          <h3 style="color: ${g.color || '#f6821f'}">${g.name}</h3>
-          <div class="nodes-grid">${itemsHtml}</div>
-        </div>`;
-    }
+    html += `</div></div>`;
   });
 
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>节点路由中心</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f7f9fa; color: #333; margin: 0; padding: 40px 20px; }
-    .container { max-width: 900px; margin: 0 auto; }
-    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #e1e4e8; padding-bottom: 15px; }
-    h1 { margin: 0; font-size: 24px; color: #f6821f; }
-    .admin-link { color: #666; text-decoration: none; font-size: 14px; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; }
-    .admin-link:hover { background: #f3f4f6; color: #f6821f; border-color: #f6821f; }
-    .group-box { background: white; border: 1px solid #e1e4e8; border-left-width: 6px; border-radius: 6px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
-    .group-box h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; }
-    .nodes-grid { display: flex; flex-wrap: wrap; gap: 10px; }
-    .node-item { background: #f3f4f6; color: #1f2937; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-size: 14px; border: 1px solid #e5e7eb; transition: all 0.2s; }
-    .node-item:hover { background: #f6821f; color: white; border-color: #f6821f; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>Cloudflare 节点导航</h1>
-      <a class="admin-link" href="/admin">进入管理后台</a>
-    </header>
-    <main>
-      ${groupsHtml || '<p style="text-align:center; color:#888;">暂无显示的分组或节点</p>'}
-    </main>
-  </div>
-</body>
-</html>`;
+  if (type === 'node') {
+    html += `
+    <div class="group-container"><div class="group-title">工具箱</div><div class="btn-grid" style="flex-direction:column;align-items:center;">
+      <div id="linkUrl" style="background:#eee;padding:10px;border-radius:5px;font-size:12px;width:100%;word-break:break-all;text-align:left;">点击上方获取订阅链接...</div>
+      <button class="btn-primary" onclick="copyUrl()" style="width:80%;margin-top:10px;">复制订阅链接</button>
+      
+      <div id="sourceUrl" style="background:#eee;padding:10px;border-radius:5px;font-size:12px;width:100%;word-break:break-all;text-align:left;margin-top:10px;">真实地址...</div>
+      <button class="btn-primary" onclick="copySourceUrl()" style="width:80%;margin-top:10px;">复制真实地址</button>
+
+      <div id="output" style="background:#eee;padding:10px;border-radius:5px;font-size:12px;width:100%;word-break:break-all;text-align:left;min-height:50px;margin-top:10px;">节点内容...</div>
+      <button class="btn-primary" onclick="copyText()" style="width:80%;margin-top:10px;">复制具体内容</button>
+    </div></div>
+    <div id="customAlert" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#28a745;color:#fff;padding:10px 20px;border-radius:20px;display:none;z-index:1000;"></div>`;
+  }
+  return html;
 }
 
-function renderAdmin(data, backups) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>控制面板 - Cloudflare 管理</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fafafa; margin: 0; padding: 20px; color: #333; }
-    .container { max-width: 950px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-    h1 { color: #f6821f; font-size: 22px; margin-top: 0; display: flex; justify-content: space-between; align-items: center; }
-    .toolbar { background: #fff8f3; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid #fdecd2; }
-    button { background: #f6821f; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-    button:hover { background: #e07218; }
-    button.secondary { background: #666; }
-    button.secondary:hover { background: #444; }
-    button.danger { background: #d93838; }
-    button.danger:hover { background: #b82b2b; }
-    .section-title { font-size: 16px; font-weight: bold; margin: 20px 0 10px; border-bottom: 2px solid #f6821f; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-    .group-card { background: #fff; border: 1px solid #e1e1e1; border-left-width: 6px; border-radius: 6px; margin-bottom: 15px; padding: 15px; }
-    .group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; }
-    .item-row, .route-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; background: #f9f9f9; padding: 8px; border-radius: 4px; }
-    input[type="text"], input[type="password"] { padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
-    input[type="color"] { border: none; width: 30px; height: 26px; cursor: pointer; background: none; }
-    label { font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
-    select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
-    .back-home { color: #f6821f; text-decoration: none; font-size: 14px; font-weight: normal; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>
-      <span>Cloudflare 节点与路由管理面板</span>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <a class="back-home" href="/" target="_blank">查看主页</a>
-        <button onclick="saveAll()">保存全部修改</button>
-      </div>
-    </h1>
+// --- 渲染展示页交互 JS ---
+function renderDisplayScripts(appData) {
+  // 构建前端 MAPPINGS (将嵌套结构拍平给页面用)
+  const map = {};
+  appData.nodes.forEach(g => g.items.forEach(i => map[i.path] = i.url));
+  appData.routes.forEach(g => g.items.forEach(i => map[i.path] = i.url));
+
+  return `<script>
+    const MAPPINGS = ${JSON.stringify(map)};
     
-    <div class="toolbar">
-      <strong>KV 数据备份与传导：</strong>
-      <button onclick="doBackup()">备份到KV</button>
-      <select id="backupSelect">
-        ${backups.map(b => `<option value="${b}">${b}</option>`).join('')}
-      </select>
-      <button class="secondary" onclick="doRestore()">恢复所选备份</button>
-      <button class="secondary" onclick="exportJSON()">导出配置</button>
-      <button class="secondary" onclick="document.getElementById('importFile').click()">导入配置</button>
-      <input type="file" id="importFile" style="display:none" onchange="importJSON(event)">
-      <div style="margin-left:auto;">
-        修改密码：<input type="password" id="newPassword" placeholder="留空则不改" style="width:100px;">
+    function showAlert(msg) {
+      const a = document.getElementById('customAlert');
+      if(!a) { alert(msg); return; }
+      a.textContent = msg; a.style.display = "block";
+      setTimeout(() => a.style.display = "none", 2000);
+    }
+
+    function copyUrl() {
+      const t = document.getElementById('linkUrl').textContent;
+      if(!t || t.includes('点击')) return;
+      navigator.clipboard.writeText(t).then(() => showAlert("订阅地址已复制"));
+    }
+    
+    function copySourceUrl() {
+      const t = document.getElementById('sourceUrl').textContent;
+      if(!t || t.includes('点击') || t.includes('未在配置')) return;
+      navigator.clipboard.writeText(t).then(() => showAlert("实际地址已复制"));
+    }
+    
+    function copyText() {
+      const t = document.getElementById('output').textContent;
+      if(!t || t.includes('获取中')) return;
+      navigator.clipboard.writeText(t).then(() => showAlert("节点内容已复制"));
+    }
+
+    async function fetchData(path) {
+      const o = document.getElementById('output');
+      const l = document.getElementById('linkUrl');
+      const s = document.getElementById('sourceUrl');
+      if(l) l.textContent = window.location.origin + '/' + path.replace(/^\\/+/, '');
+      
+      const realUrl = MAPPINGS[path];
+      if(s) s.textContent = realUrl ? realUrl : "未在配置中找到此链接";
+      
+      if(!o) return; // 如果是路由页可能没有这个框
+      o.textContent = "内容获取中...";
+      if (!realUrl) { o.textContent = "未找到真实地址"; return; }
+      
+      try {
+        const proxyUrl = window.location.origin + '/proxy?url=' + encodeURIComponent(realUrl);
+        const r = await fetch(proxyUrl);
+        o.textContent = r.ok ? await r.text() : "请求失败，状态码: " + r.status;
+      } catch(e) {
+        o.textContent = "内容获取失败，请重试";
+      }
+    }
+  </script>`;
+}
+
+// --- 渲染备份组件 ---
+function renderBackupComponent() {
+  return `
+    <div class="action-bar">
+      <button class="btn-primary" onclick="sysBackup()" style="background:#28a745;">💾 备份</button>
+      <button class="btn-primary" onclick="showRestoreModal()" style="background:#fd7e14;">⏪ 恢复</button>
+      <button class="btn-primary" onclick="sysExport()" style="background:#6f42c1;">📤 导出</button>
+      <button class="btn-primary" onclick="document.getElementById('importFile').click()" style="background:#007bff;">📥 导入</button>
+      <input type="file" id="importFile" style="display:none" accept=".json" onchange="sysImport(this)">
+    </div>
+  `;
+}
+
+// --- 渲染管理容器 ---
+function renderManage(dataType) {
+  return `<div id="manage-editor" data-type="${dataType}"></div>
+          <button class="btn-primary" onclick="addGroup()" style="width:100%;padding:12px;margin-top:15px;background:#6c757d;">${ICONS.add} 添加新分组</button>
+          <button class="btn-primary" onclick="saveAllData()" style="width:100%;padding:12px;margin-top:10px;">${ICONS.save} 保存所有更改</button>`;
+}
+
+// --- 渲染管理交互脚本 (整合 Reactivity) ---
+function renderModalsAndScripts(appData, currentPath) {
+  const type = currentPath.includes("nodes") ? "nodes" : "routes";
+  return `
+  <!-- 恢复弹窗 -->
+  <div id="restoreModal" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-bottom:15px;">⏪ 选择备份文件恢复</h3>
+      <select id="backupSelect" style="width:100%;margin-bottom:15px;"></select>
+      <small style="color:red;display:block;margin-bottom:15px;">警告：将覆盖当前所有数据！</small>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-primary" onclick="sysRestore()" style="flex:1;">确认恢复</button>
+        <button class="btn-danger" onclick="closeModal('restoreModal')" style="flex:1;">取消</button>
       </div>
     </div>
-
-    <!-- 一、节点分组及条目管理 -->
-    <div class="section-title">
-      <span>一、节点分组及条目管理（主页展示）</span>
-      <button onclick="addGroup()">+ 添加分组</button>
-    </div>
-    <div id="groupsContainer"></div>
-
-    <!-- 二、路由分组及条目管理 (API 映射) -->
-    <div class="section-title">
-      <span>二、路由映射管理（API/链接获取源）</span>
-      <button onclick="addRoute()">+ 添加路由映射</button>
-    </div>
-    <div id="routesContainer"></div>
   </div>
 
   <script>
-    let appData = ${JSON.stringify(data)};
-    if (!appData.routes) appData.routes = {};
+    let appData = ${JSON.stringify(appData)};
+    let activeType = "${type}"; 
+    let activeList = appData[activeType] || [];
 
-    function render() {
-      renderGroups();
-      renderRoutes();
-    }
-
-    function renderGroups() {
-      const container = document.getElementById('groupsContainer');
+    // --- 界面渲染引擎 ---
+    function renderEditor() {
+      const container = document.getElementById('manage-editor');
       container.innerHTML = '';
       
-      appData.groups.forEach((g, gIdx) => {
-        const card = document.createElement('div');
-        card.className = 'group-card';
-        card.style.borderLeftColor = g.color || '#f6821f';
+      activeList.forEach((group, gIdx) => {
+        const div = document.createElement('div');
+        div.className = 'm-group';
         
-        card.innerHTML = \`
-          <div class="group-header">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <input type="color" value="\${g.color || '#f6821f'}" onchange="updateGroupProp(\${gIdx}, 'color', this.value)" title="点击选择边框色调">
-              <input type="text" value="\${g.name}" oninput="updateGroupProp(\${gIdx}, 'name', this.value)" placeholder="分组名称" style="font-weight:bold;">
-              <label><input type="checkbox" \${g.show ? 'checked' : ''} onchange="updateGroupProp(\${gIdx}, 'show', this.checked)"> 显示</label>
-            </div>
-            <div style="display:flex; gap:4px;">
-              \${gIdx > 0 ? \`<button class="secondary" onclick="moveGroup(\${gIdx}, -1)">↑</button>\` : ''}
-              \${gIdx < appData.groups.length - 1 ? \`<button class="secondary" onclick="moveGroup(\${gIdx}, 1)">↓</button>\` : ''}
-              <button class="danger" onclick="deleteGroup(\${gIdx})">删除分组</button>
-            </div>
-          </div>
-          <div class="items-list" id="items-\${gIdx}"></div>
-          <div style="margin-top:8px;">
-            <button style="font-size:12px; padding:4px 8px;" onclick="addItem(\${gIdx})">+ 添加条目</button>
-          </div>
-        \`;
+        // 分组头部
+        const toggleKey = activeType === 'nodes' ? 'show' : 'show';
+        const toggleLabel = activeType === 'nodes' ? '显示' : '显示';
         
-        const itemsList = card.querySelector('#items-' + gIdx);
-        g.items.forEach((item, iIdx) => {
-          const row = document.createElement('div');
-          row.className = 'item-row';
-          row.innerHTML = \`
-            <input type="text" value="\${item.name}" placeholder="条目名称" oninput="updateItemProp(\${gIdx}, \${iIdx}, 'name', this.value)">
-            <input type="text" value="\${item.path}" placeholder="对应路由路径 (如 zhaoqing)" oninput="updateItemProp(\${gIdx}, \${iIdx}, 'path', this.value)" style="flex:1;">
-            <label><input type="checkbox" \${item.show ? 'checked' : ''} onchange="updateItemProp(\${gIdx}, \${iIdx}, 'show', this.checked)"> 显示</label>
-            <div style="display:flex; gap:4px;">
-              \${iIdx > 0 ? \`<button class="secondary" style="padding:2px 6px;" onclick="moveItem(\${gIdx}, \${iIdx}, -1)">↑</button>\` : ''}
-              \${iIdx < g.items.length - 1 ? \`<button class="secondary" style="padding:2px 6px;" onclick="moveItem(\${gIdx}, \${iIdx}, 1)">↓</button>\` : ''}
-              <button class="danger" style="padding:2px 6px;" onclick="deleteItem(\${gIdx}, \${iIdx})">删除</button>
+        let html = \`<div class="m-group-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="text" value="\${group.name}" onchange="updateGroup(\${gIdx}, 'name', this.value)" style="margin:0;width:120px;">
+            <label style="font-size:12px;font-weight:normal;"><input type="checkbox" \${group[toggleKey] !== false ? 'checked' : ''} onchange="updateGroup(\${gIdx}, '\${toggleKey}', this.checked)"> \${toggleLabel}</label>
+          </div>
+          <div>
+            <button class="btn-icon" onclick="moveGroup(\${gIdx}, -1)">\${ICONS.up}</button>
+            <button class="btn-icon" onclick="moveGroup(\${gIdx}, 1)">\${ICONS.down}</button>
+            <button class="btn-icon" onclick="delGroup(\${gIdx})" style="color:red;">\${ICONS.del}</button>
+          </div>
+        </div><div class="m-items">\`;
+
+        // 条目列表
+        const itemToggleKey = activeType === 'nodes' ? 'show' : 'enabled';
+        const itemToggleLabel = activeType === 'nodes' ? '显示' : '启用';
+
+        group.items.forEach((item, iIdx) => {
+          html += \`<div class="m-item">
+            <div style="flex:1;display:flex;flex-direction:column;gap:5px;">
+              <div style="display:flex;gap:5px;">
+                <input type="text" placeholder="名称" value="\${item.name || ''}" onchange="updateItem(\${gIdx}, \${iIdx}, 'name', this.value)" style="flex:1;">
+                <input type="text" placeholder="路径 (如 xx/yy)" value="\${item.path || ''}" onchange="updateItem(\${gIdx}, \${iIdx}, 'path', this.value)" style="flex:2;">
+                <select onchange="updateItem(\${gIdx}, \${iIdx}, 'color', this.value)" style="width:80px;margin-bottom:0;">
+                  <option value="blue" \${item.color==='blue'?'selected':''}>Blue</option>
+                  <option value="green" \${item.color==='green'?'selected':''}>Green</option>
+                  <option value="pink" \${item.color==='pink'?'selected':''}>Pink</option>
+                  <option value="orange" \${item.color==='orange'?'selected':''}>Orange</option>
+                  <option value="red" \${item.color==='red'?'selected':''}>Red</option>
+                  <option value="purple" \${item.color==='purple'?'selected':''}>Purple</option>
+                  <option value="teal" \${item.color==='teal'?'selected':''}>Teal</option>
+                </select>
+              </div>
+              <input type="url" placeholder="订阅链接/目标真实URL" value="\${item.url || ''}" onchange="updateItem(\${gIdx}, \${iIdx}, 'url', this.value)">
+              <label style="font-size:12px;"><input type="checkbox" \${item[itemToggleKey] !== false ? 'checked' : ''} onchange="updateItem(\${gIdx}, \${iIdx}, '\${itemToggleKey}', this.checked)"> \${itemToggleLabel}</label>
             </div>
-          \`;
-          itemsList.appendChild(row);
+            <div style="display:flex;flex-direction:column;">
+              <button class="btn-icon" onclick="moveItem(\${gIdx}, \${iIdx}, -1)">\${ICONS.up}</button>
+              <button class="btn-icon" onclick="moveItem(\${gIdx}, \${iIdx}, 1)">\${ICONS.down}</button>
+              <button class="btn-icon" onclick="delItem(\${gIdx}, \${iIdx})" style="color:red;margin-top:auto;">\${ICONS.del}</button>
+            </div>
+          </div>\`;
         });
-        
-        container.appendChild(card);
+
+        html += \`<button class="btn-icon" onclick="addItem(\${gIdx})" style="width:100%;border:1px dashed #ccc;margin-top:5px;">\${ICONS.add} 添加条目</button></div>\`;
+        div.innerHTML = html;
+        container.appendChild(div);
       });
     }
 
-    function renderRoutes() {
-      const container = document.getElementById('routesContainer');
-      container.innerHTML = '';
-      
-      const routeKeys = Object.keys(appData.routes);
-      routeKeys.forEach((key, rIdx) => {
-        const routeObj = appData.routes[key];
-        const targetVal = typeof routeObj === 'object' ? routeObj.target : routeObj;
-        const isEnabled = typeof routeObj === 'object' ? (routeObj.enabled !== false) : true;
-
-        const row = document.createElement('div');
-        row.className = 'route-row';
-        row.innerHTML = \`
-          <input type="text" value="\${key}" placeholder="路径 Key (如 zhaoqing)" onchange="updateRouteKey('\${key}', this.value)" style="width:160px;">
-          <input type="text" value="\${targetVal}" placeholder="远程节点连接/API地址 (URL)" oninput="appData.routes['\${key}'].target = this.value" style="flex:1;">
-          <label><input type="checkbox" \${isEnabled ? 'checked' : ''} onchange="appData.routes['\${key}'].enabled = this.checked"> 启用</label>
-          <button class="danger" style="padding:4px 8px;" onclick="deleteRoute('\${key}')">删除</button>
-        \`;
-        container.appendChild(row);
-      });
-    }
-
-    function updateGroupProp(gIdx, prop, val) { appData.groups[gIdx][prop] = val; if(prop === 'color') renderGroups(); }
-    function updateItemProp(gIdx, iIdx, prop, val) { appData.groups[gIdx].items[iIdx][prop] = val; }
+    // --- 数据操作逻辑 ---
+    function moveArr(arr, idx, dir) { const t = idx+dir; if(t<0||t>=arr.length) return false; [arr[idx], arr[t]] = [arr[t], arr[idx]]; return true; }
     
-    function addGroup() {
-      appData.groups.push({ id: 'g_' + Date.now(), name: '新分组', color: '#3b82f6', show: true, items: [] });
-      renderGroups();
+    function addGroup() { activeList.push({ id: 'g_'+Date.now(), name: "新分组", show: true, items: [] }); renderEditor(); }
+    function delGroup(gIdx) { if(confirm("确定删除此分组及其所有条目吗？")) { activeList.splice(gIdx, 1); renderEditor(); } }
+    function moveGroup(gIdx, dir) { if(moveArr(activeList, gIdx, dir)) renderEditor(); }
+    function updateGroup(gIdx, key, val) { activeList[gIdx][key] = val; }
+
+    function addItem(gIdx) { activeList[gIdx].items.push({ id: 'i_'+Date.now(), name: "新条目", path: "", url: "", color: "blue", show: true, enabled: true }); renderEditor(); }
+    function delItem(gIdx, iIdx) { activeList[gIdx].items.splice(iIdx, 1); renderEditor(); }
+    function moveItem(gIdx, iIdx, dir) { if(moveArr(activeList[gIdx].items, iIdx, dir)) renderEditor(); }
+    function updateItem(gIdx, iIdx, key, val) { activeList[gIdx].items[iIdx][key] = val; }
+
+    async function saveAllData() {
+      appData[activeType] = activeList;
+      try {
+        const res = await fetch('/api/data', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(appData) });
+        const data = await res.json();
+        if(data.success) alert('✅ 保存成功！'); else alert('❌ 保存失败');
+      } catch(e) { alert('请求出错'); }
     }
-    function deleteGroup(gIdx) { if(confirm('确定删除该分组吗？')) { appData.groups.splice(gIdx, 1); renderGroups(); } }
+
+    // --- 备份/恢复逻辑 ---
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
     
-    function addItem(gIdx) {
-      appData.groups[gIdx].items.push({ name: '', path: '', show: true });
-      renderGroups();
+    async function sysBackup() {
+      if(!confirm('确定将当前配置备份到KV吗？')) return;
+      const r = await (await fetch('/api/backup', { method:'POST' })).json();
+      alert(r.success ? '✅ 备份成功！\\n标识: '+r.key : '❌ 备份失败');
     }
-    function deleteItem(gIdx, iIdx) { appData.groups[gIdx].items.splice(iIdx, 1); renderGroups(); }
-
-    function moveGroup(idx, dir) {
-      const target = idx + dir;
-      const temp = appData.groups[idx];
-      appData.groups[idx] = appData.groups[target];
-      appData.groups[target] = temp;
-      renderGroups();
+    
+    async function showRestoreModal() {
+      const r = await (await fetch('/api/backup')).json();
+      if(!r.success || r.backups.length === 0) return alert('没有找到任何备份文件');
+      const sel = document.getElementById('backupSelect'); sel.innerHTML = '';
+      r.backups.sort().reverse().forEach(b => sel.appendChild(new Option(b, b)));
+      document.getElementById('restoreModal').classList.add('active');
     }
-
-    function moveItem(gIdx, idx, dir) {
-      const items = appData.groups[gIdx].items;
-      const target = idx + dir;
-      const temp = items[idx];
-      items[idx] = items[target];
-      items[target] = temp;
-      renderGroups();
+    
+    async function sysRestore() {
+      const key = document.getElementById('backupSelect').value;
+      if(!confirm('该操作将覆盖所有数据，确定恢复吗？')) return;
+      const r = await (await fetch('/api/restore', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key}) })).json();
+      if(r.success) { alert('✅ 恢复成功'); location.reload(); } else alert('❌ 恢复失败');
     }
 
-    function addRoute() {
-      let newKey = 'new_path_' + Date.now().toString().slice(-4);
-      appData.routes[newKey] = { target: 'https://', enabled: true };
-      renderRoutes();
-    }
+    function sysExport() { window.location.href = '/api/export'; }
 
-    function updateRouteKey(oldKey, newKey) {
-      newKey = newKey.trim();
-      if (!newKey || oldKey === newKey) return;
-      if (appData.routes[newKey]) {
-        alert('该路径 Key 已存在！');
-        renderRoutes();
-        return;
-      }
-      appData.routes[newKey] = appData.routes[oldKey];
-      delete appData.routes[oldKey];
-      renderRoutes();
-    }
-
-    function deleteRoute(key) {
-      if (confirm('确定删除路由映射 [' + key + '] 吗？')) {
-        delete appData.routes[key];
-        renderRoutes();
-      }
-    }
-
-    async function saveAll() {
-      const pwd = document.getElementById('newPassword').value;
-      const payload = { action: 'save', groups: appData.groups, routes: appData.routes };
-      if (pwd) payload.password = pwd;
-      
-      const res = await fetch('/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
-      if (json.success) alert('保存成功！所有配置已写入 KV。');
-      else alert('保存失败');
-    }
-
-    async function doBackup() {
-      const res = await fetch('/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'backup' })
-      });
-      const json = await res.json();
-      if (json.success) {
-        alert('备份成功: ' + json.name);
-        location.reload();
-      } else alert('备份失败');
-    }
-
-    async function doRestore() {
-      const name = document.getElementById('backupSelect').value;
-      if (!name) return alert('请先选择一个备份文件');
-      if (!confirm('确定要恢复备份 [' + name + '] 吗？当前未保存的修改将被覆盖。')) return;
-      
-      const res = await fetch('/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'restore', name })
-      });
-      const json = await res.json();
-      if (json.success) {
-        alert('恢复成功！');
-        location.reload();
-      } else alert('恢复失败');
-    }
-
-    function exportJSON() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
-      const dlAnchor = document.createElement('a');
-      dlAnchor.setAttribute("href", dataStr);
-      dlAnchor.setAttribute("download", "nodes_and_routes_export.json");
-      document.body.appendChild(dlAnchor);
-      dlAnchor.click();
-      dlAnchor.remove();
-    }
-
-    function importJSON(event) {
-      const file = event.target.files[0];
-      if (!file) return;
+    function sysImport(input) {
+      const file = input.files[0]; if(!file) return;
       const reader = new FileReader();
-      reader.onload = function(e) {
+      reader.onload = async e => {
         try {
-          const parsed = JSON.parse(e.target.result);
-          if (parsed.groups && parsed.routes) {
-            appData = parsed;
-            render();
-            alert('导入成功，请点击右上角“保存全部修改”将数据写入 KV！');
-          } else {
-            alert('文件格式错误（必须包含 groups 和 routes）');
-          }
-        } catch(err) {
-          alert('解析 JSON 失败');
-        }
+          const json = JSON.parse(e.target.result);
+          if(!confirm('确定导入并覆盖当前数据吗？')) return;
+          const r = await (await fetch('/api/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: e.target.result })).json();
+          if(r.success) { alert('✅ 导入成功'); location.reload(); } else alert('❌ 导入失败');
+        } catch(err) { alert('❌ JSON 格式错误'); }
+        input.value = '';
       };
       reader.readAsText(file);
     }
 
-    render();
-  </script>
-</body>
-</html>`;
+    // 初始化渲染
+    window.onload = renderEditor;
+  </script>`;
 }
