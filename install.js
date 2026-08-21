@@ -938,7 +938,7 @@ KV 名称: MY_KV_STORE （可留空）
         div.innerHTML = \`
           <input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
           <input type="text" class="env-value" placeholder="变量值" style="flex:3;">
-          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">遇同名保留</option><option value="replace">遇同名替换</option></select>
+          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留</option><option value="replace">替换</option></select>
           <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">✖</button>
         \`;
         div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
