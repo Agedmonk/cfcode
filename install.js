@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211301"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211513"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -142,7 +142,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-    log(`[1/5] 拉取代码: ${codeUrl}`);
+    log(`[1/4] 拉取代码: ${codeUrl}`);
     const res = await fetchWithTimeout(codeUrl, {}, 15000);
     if (!res.ok) throw new Error(`拉取代码失败: HTTP ${res.status}`);
     const workerCode = await res.text();
@@ -151,8 +151,9 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     const isESM = workerCode.includes("export default");
     let bindings = [];
 
+    log(`[2/4] 检查并处理原有配置(KV/ENV)...`);
     if (kvName && kvName.trim()) {
-      log(`[2/5] 处理 KV [${kvName}]...`);
+      log(`[提示] 正在指定新 KV [${kvName}]...`);
       const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
       if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
       const existing = kvList.result.find(i => i.title === kvName);
@@ -179,7 +180,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       bindings = [{ type: "kv_namespace", name: "KV", namespace_id: kvId }];
       log(`[成功] KV 绑定配置完成 (ID: ${kvId})`);
     } else {
-      log(`[2/5] 保留原有绑定...`);
+      log(`[提示] 未指定新 KV，尝试拉取原有绑定...`);
       try {
         const get = await fetchWithTimeout(
           `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, 
@@ -191,38 +192,50 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
           const data = await get.json();
           if (data.success && Array.isArray(data.result)) {
             bindings = data.result;
-            log(`[成功] 获取并保留原有绑定 (${bindings.length}个)`);
+            
+            // 分类统计原有绑定类型
+            const kvCount = bindings.filter(b => b.type === 'kv_namespace').length;
+            const envCount = bindings.filter(b => b.type === 'plain_text' || b.type === 'secret_text').length;
+            const otherCount = bindings.length - kvCount - envCount;
+            
+            let details = [];
+            if (kvCount > 0) details.push(`KV ${kvCount} 个`);
+            if (envCount > 0) details.push(`ENV ${envCount} 个`);
+            if (otherCount > 0) details.push(`其他 ${otherCount} 个`);
+            
+            log(`[成功] 获取并保留原有配置: 共 ${bindings.length} 项 ${details.length > 0 ? '(' + details.join(', ') + ')' : ''}`);
           } else {
             log(`[提示] 原项目没有绑定配置`);
           }
         } else if (get.status === 404) {
-          log(`[提示] 属于全新项目，无需保留旧绑定`);
+          log(`[提示] 属于全新项目，无需保留旧配置`);
         } else {
-          log(`[警告] 获取旧绑定 API 异常: HTTP ${get.status}`);
+          log(`[警告] 获取旧配置 API 异常: HTTP ${get.status}`);
         }
       } catch (err) {
-        log(`[警告] 解析旧绑定出错: ${err.message}`);
+        log(`[警告] 解析旧配置出错: ${err.message}`);
       }
     }
 
-    // --- 新增：处理 ENV 变量逻辑 ---
+    log(`[3/4] 处理附加环境变量 (ENV)...`);
     if (envs && envs.length > 0) {
-      log(`[提示] 处理附加环境变量 (${envs.length}个)...`);
       envs.forEach(env => {
         if (!env.name) return;
         const existingIdx = bindings.findIndex(b => b.name === env.name);
         if (existingIdx >= 0) {
           if (env.action === 'replace') {
             bindings[existingIdx] = { type: "plain_text", name: env.name, text: env.value };
-            log(`[更新] 替换已有变量: ${env.name}`);
+            log(`  - [更新] 替换已有变量: ${env.name}`);
           } else {
-            log(`[跳过] 保留已有变量: ${env.name}`);
+            log(`  - [跳过] 保留已有变量: ${env.name}`);
           }
         } else {
           bindings.push({ type: "plain_text", name: env.name, text: env.value });
-          log(`[新增] 添加新变量: ${env.name}`);
+          log(`  - [新增] 添加新变量: ${env.name}`);
         }
       });
+    } else {
+      log(`[提示] 无附加环境变量，跳过。`);
     }
 
     const metadata = { bindings };
@@ -232,7 +245,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     const blob = new Blob([workerCode], { type: isESM ? "application/javascript+module" : "application/javascript" });
     if (isESM) form.append("_worker.js", blob, "_worker.js"); else form.append("script", blob);
 
-    log(`[3/5] 部署 Worker [${workerName}]...`);
+    log(`[4/4] 提交部署 Worker [${workerName}]...`);
     const dep = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}`, { method: "PUT", headers: { "Authorization": `Bearer ${apiToken}` }, body: form }, 20000)).json();
     if (!dep.success) throw new Error(`部署失败: ${JSON.stringify(dep.errors)}`);
     log(`[成功] 部署完成`);
