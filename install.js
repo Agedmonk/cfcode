@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211346"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211349"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -938,7 +938,7 @@ KV 名称: MY_KV_STORE （可留空）
         div.innerHTML = \`
           <input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
           <input type="text" class="env-value" placeholder="变量值" style="flex:3;">
-          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留</option><option value="replace">替换</option></select>
+          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留原值</option><option value="replace">替换原值</option></select>
           <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">✖</button>
         \`;
         div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
