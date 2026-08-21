@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211418"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211428"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -1049,7 +1049,6 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
 }
 
 // ==================== 常用部署页面 ====================
-// ==================== 常用部署页面 ====================
 function getDashboardPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>常用部署</title><style>${GLOBAL_STYLE}
     .account-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: #fff; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
@@ -1310,7 +1309,7 @@ function getDashboardPage() {
 }
 
 // ==================== 账户管理页面 ====================
-f// ==================== 账户管理页面 ====================
+// ==================== 账户管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
