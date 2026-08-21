@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211438"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211456"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -58,13 +58,15 @@ export default {
     }
     // ======================================================
 	
-    // API 路由
+	// API 路由
     if (path === "/api/deploy") {
-      if (request.method === "POST") return handleUnifiedDeploy(request);
-      if (request.method === "GET") return handleGetDeploy(url);
+      if (request.method === "POST") return handleUnifiedDeploy(request, env);
+      if (request.method === "GET") return handleGetDeploy(url, env);
     }
-    if (path === "/api/deploy-worker" && request.method === "POST") return handleDeployWorker(request);
-    if (path === "/api/deploy-pages" && request.method === "POST") return handleDeployPages(request);
+    if (path === "/api/deploy-worker" && request.method === "POST") return handleDeployWorker(request, env);
+    if (path === "/api/deploy-pages" && request.method === "POST") return handleDeployPages(request, env);
+    if (path === "/api/config" && request.method === "POST") return handleSaveConfig(request, env);
+    
     // === 账户 API ===
 	if (path === "/api/accounts") {
       if (request.method === "GET") return handleGetAccounts(env);
@@ -80,6 +82,7 @@ export default {
         return new Response(JSON.stringify({ success: false }), { status: 500 });
       }
     }
+
 	// === 新数据备份、恢复、导出、导入 API ===
     if (path === "/api/accounts/backup") {
       if (request.method === "GET") return handleListBackups(env);
@@ -503,6 +506,20 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
   }
 }
 
+// ==================== 缺省前缀辅助函数 ====================
+async function getSystemPrefix(env) {
+  try {
+    const raw = await env.KV.get(ACCOUNTS_KEY);
+    return raw ? (JSON.parse(raw).defaultPrefix || "") : "";
+  } catch { return ""; }
+}
+
+function processSourceUrl(url, prefix) {
+  if (!url || url.trim() === "" || url.trim() === "default") return url;
+  if (url.toLowerCase().startsWith('http://') || url.toLowerCase().startsWith('https://')) return url;
+  return prefix ? (prefix + url.trim()) : url.trim();
+}
+
 // ==================== 统一部署分发 ====================
 async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = []) {
   const t = String(type || "").toLowerCase();
@@ -513,7 +530,7 @@ async function deployByType(type, id, token, kv, name, source, kvAction = 'keep'
   return { success: false, error: "type 无效", logs: ["ERR"], status: 400 };
 }
 
-async function handleUnifiedDeploy(request) {
+async function handleUnifiedDeploy(request, env) {
   const ct = request.headers.get("Content-Type") || "";
   let p = {};
   if (ct.includes("application/json")) {
@@ -521,33 +538,70 @@ async function handleUnifiedDeploy(request) {
     p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url, envs: b.envs || [] };
   } else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), envs: [] }; // 表单暂不支持复杂的envs传递
+    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), envs: [] }; 
   }
+  const prefix = await getSystemPrefix(env);
+  p.source = processSourceUrl(p.source, prefix);
   const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
-async function handleGetDeploy(url) {
+async function handleGetDeploy(url, env) {
   const q = url.searchParams;
-  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", q.get("kvAction") || 'keep', []);
+  const prefix = await getSystemPrefix(env);
+  const source = processSourceUrl(q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", prefix);
+  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), source, q.get("kvAction") || 'keep', []);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
-async function handleDeployWorker(request) {
+async function handleDeployWorker(request, env) {
   const b = await request.json().catch(() => ({}));
-  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, b.codeUrl, b.kvAction || 'keep', b.envs || []);
+  const prefix = await getSystemPrefix(env);
+  const codeUrl = processSourceUrl(b.codeUrl, prefix);
+  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || []);
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
-async function handleDeployPages(request) {
+async function handleDeployPages(request, env) {
   const b = await request.json().catch(() => ({}));
-  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, b.zipUrl, b.kvAction || 'keep', b.envs || []);
+  const prefix = await getSystemPrefix(env);
+  const zipUrl = processSourceUrl(b.zipUrl, prefix);
+  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || []);
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
 // ==================== 账户管理 API ====================
+async function saveAccountsList(env, accounts) {
+  const raw = await env.KV.get(ACCOUNTS_KEY);
+  const parsed = raw ? JSON.parse(raw) : {};
+  parsed.accounts = accounts;
+  await env.KV.put(ACCOUNTS_KEY, JSON.stringify(parsed));
+}
+
 async function handleGetAccounts(env) {
-  return new Response(JSON.stringify({ success: true, accounts: await getAccountsList(env) }), { headers: { "Content-Type": "application/json" } });
+  let data = { accounts: [], defaultPrefix: "" };
+  try {
+    const raw = await env.KV.get(ACCOUNTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      data.accounts = parsed.accounts || [];
+      data.defaultPrefix = parsed.defaultPrefix || "";
+    }
+  } catch (e) {}
+  return new Response(JSON.stringify({ success: true, ...data }), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleSaveConfig(request, env) {
+  try {
+    const body = await request.json();
+    const raw = await env.KV.get(ACCOUNTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : { accounts: [] };
+    parsed.defaultPrefix = body.defaultPrefix || "";
+    await env.KV.put(ACCOUNTS_KEY, JSON.stringify(parsed));
+    return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
+  } catch(e) { 
+    return new Response(JSON.stringify({ success: false }), { status: 500 }); 
+  }
 }
 
 async function handlePostAccount(request, env) {
@@ -1308,8 +1362,7 @@ function getDashboardPage() {
 </body></html>`;
 }
 
-// ==================== 账户管理页面 ====================
-// ==================== 账户管理页面 ====================
+/// ==================== 账户管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -1356,6 +1409,17 @@ function getAccountsPage() {
       <div id="accountList"></div>
       <button id="btnAdd" class="btn-primary" style="width:100%; padding:12px; margin-top:10px;">➕ 添加新账户</button>
       
+      <!-- 新增：缺省地址前缀模块 -->
+      <div class="card" style="margin-top: 25px; padding: 20px; background: #fff; border: 1px solid var(--border); box-shadow: none;">
+        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">🔗 缺省地址前缀</h3>
+        <div style="display:flex; align-items:center; gap:10px;">
+           <input type="text" id="sysDefaultPrefix" readonly placeholder="例如: https://raw.githubusercontent.com/用户名/库名/main/" style="background:#f1f5f9; flex:1;">
+           <button id="btnEditPrefix" class="btn-icon" style="color:var(--primary); flex-shrink:0;">${ICONS.edit}</button>
+           <button id="btnSavePrefix" class="btn-primary" style="display:none; padding:8px 16px; flex-shrink:0;">保存</button>
+        </div>
+        <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height: 1.5;">部署时，若填写的源地址未以 http/https 开头，将自动在前面拼接此前缀。<br>提示：为了防止误改导致所有部署失败，请点击编辑图标进行修改，并注意确保末尾包含 / 等正确的拼接符。</p>
+      </div>
+
       <div class="nav-links">
         <a href="/dashboard">📋 常用部署</a>
         <a href="/">🏠 返回主页</a>
@@ -1375,7 +1439,6 @@ function getAccountsPage() {
 		  </div>
 	  </div>
 
-      <!-- 新增：账户级别默认环境变量设置区 -->
       <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
         <label style="color:#334155; margin-bottom:5px;">默认环境变量 (ENV) <span style="font-size:11px;color:#94a3b8;font-weight:normal;">会在常用部署页面自动加载</span></label>
         <div id="accEnvList" style="display:flex; flex-direction:column; gap:6px;"></div>
@@ -1412,13 +1475,21 @@ function getAccountsPage() {
     ${GLOBAL_SCRIPT}
     const ICONS = ${JSON.stringify(ICONS)};
     let accounts = [];
+    let sysDefaultPrefix = "";
     let editingIdentifier = null;
 
     async function loadAccounts() {
       const res = await fetch('/api/accounts');
       const data = await res.json();
-      if (data.success) { accounts = data.accounts || []; renderAccounts(); }
+      if (data.success) { 
+        accounts = data.accounts || []; 
+        sysDefaultPrefix = data.defaultPrefix || "";
+        const prefInput = document.getElementById('sysDefaultPrefix');
+        if(prefInput) prefInput.value = sysDefaultPrefix;
+        renderAccounts(); 
+      }
     }
+    
     async function saveAccountsOrder() {
       await fetch('/api/accounts/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accounts }) });
       renderAccounts();
@@ -1488,6 +1559,29 @@ function getAccountsPage() {
         e.stopPropagation(); if (confirm('删除账户 ' + b.dataset.id + '？')) { await fetch('/api/accounts?identifier=' + encodeURIComponent(b.dataset.id), { method: 'DELETE' }); loadAccounts(); }
       }));
     }
+
+    /* 前缀修改保存逻辑 */
+    document.getElementById('btnEditPrefix').addEventListener('click', function() {
+       const input = document.getElementById('sysDefaultPrefix');
+       input.readOnly = false;
+       input.style.background = '#fff';
+       input.focus();
+       this.style.display = 'none';
+       document.getElementById('btnSavePrefix').style.display = 'inline-flex';
+    });
+
+    document.getElementById('btnSavePrefix').addEventListener('click', async function() {
+       const val = document.getElementById('sysDefaultPrefix').value.trim();
+       const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ defaultPrefix: val }) });
+       const data = await res.json();
+       if(data.success) {
+          const input = document.getElementById('sysDefaultPrefix');
+          input.readOnly = true;
+          input.style.background = '#f1f5f9';
+          this.style.display = 'none';
+          document.getElementById('btnEditPrefix').style.display = 'inline-flex';
+       } else alert('保存失败');
+    });
 
     /* 备份恢复逻辑 */
     document.getElementById('btnBackup').addEventListener('click', async () => {
@@ -1569,7 +1663,7 @@ function getAccountsPage() {
     function openAdd() {
       editingIdentifier = null; document.getElementById('modalTitle').textContent = '添加账户';
       document.getElementById('editIdentifier').value = ''; document.getElementById('editAccountId').value = ''; document.getElementById('editToken').value = '';
-      document.getElementById('accEnvList').innerHTML = ''; // 清空 ENV
+      document.getElementById('accEnvList').innerHTML = ''; 
       document.getElementById('editAccountShow').checked = true;
       document.getElementById('workerList').innerHTML = ''; document.getElementById('pagesList').innerHTML = '';
       document.getElementById('editModal').classList.add('active');
@@ -1580,7 +1674,7 @@ function getAccountsPage() {
       editingIdentifier = id; document.getElementById('modalTitle').textContent = '编辑: ' + id;
       document.getElementById('editIdentifier').value = acc.identifier; document.getElementById('editAccountId').value = acc.accountId; document.getElementById('editToken').value = acc.token;
       
-      document.getElementById('accEnvList').innerHTML = ''; // 加载 ENV
+      document.getElementById('accEnvList').innerHTML = ''; 
       (acc.envs||[]).forEach(e => buildAccEnvRow(e.name, e.value, e.action));
       
       document.getElementById('editAccountShow').checked = acc.show !== false;
@@ -1604,7 +1698,6 @@ function getAccountsPage() {
         show: el.querySelector('.i-show').checked
       })).filter(i => i.name);
       
-      // 获取账户级别的 ENV 数据
       const getAccEnvs = () => Array.from(document.querySelectorAll('#accEnvList .acc-env-item')).map(el => ({
         name: el.querySelector('.e-name').value.trim(),
         value: el.querySelector('.e-val').value.trim(),
