@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211456"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211301"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -124,10 +124,6 @@ async function getAccountsList(env) {
   } catch {
     return [];
   }
-}
-
-async function saveAccountsList(env, accounts) {
-  await env.KV.put(ACCOUNTS_KEY, JSON.stringify({ accounts }));
 }
 
 async function findAccountIndex(env, identifier) {
