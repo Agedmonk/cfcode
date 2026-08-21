@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211428"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211438"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -1170,8 +1170,8 @@ function getDashboardPage() {
         div.innerHTML = '<input type="text" class="e-name" placeholder="变量名(如API_KEY)" value="' + escapeHtml(name) + '" style="flex:2; font-size:12px; padding:6px;">' +
                         '<input type="text" class="e-val" placeholder="变量值" value="' + escapeHtml(val) + '" style="flex:3; font-size:12px; padding:6px;">' +
                         '<select class="e-act" style="flex:1; font-size:12px; padding:6px;">' +
-                          '<option value="keep" ' + (action==='keep'?'selected':'') + '>遇同名保留</option>' +
-                          '<option value="replace" ' + (action==='replace'?'selected':'') + '>遇同名替换</option>' +
+                          '<option value="keep" ' + (action==='keep'?'selected':'') + '>同名保留原值</option>' +
+                          '<option value="replace" ' + (action==='replace'?'selected':'') + '>同名使用新值</option>' +
                         '</select>' +
                         '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
         div.querySelector('.r-env').addEventListener('click', () => div.remove());
