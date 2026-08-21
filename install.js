@@ -1,10 +1,10 @@
-const CURRENT_VERSION = "1.0.202608211330"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211335"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-	PASSWORD = ''; //输入自定义密码	
+	const PASSWORD = ''; //输入自定义密码	
 	
 	// ==================== 登录鉴权拦截 ====================
     const expectedPassword = env.PASSWORD || PASSWORD; // 从 CF 环境变量读取密码或使用自定义密码
