@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211322"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211330"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -205,26 +205,27 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
         log(`[警告] 解析旧绑定出错: ${err.message}`);
       }
     }
-	
-	// --- 在解析完旧绑定 (bindings) 后，追加 ENV 处理逻辑 ---
-	  if (envs && envs.length > 0) {
-		log(`[提示] 处理环境变量配置 (${envs.length}个)...`);
-		envs.forEach(env => {
-		  if (!env.name) return;
-		  const existingIdx = bindings.findIndex(b => b.name === env.name);
-		  if (existingIdx >= 0) {
-			if (env.action === 'replace') {
-			  bindings[existingIdx] = { type: "plain_text", name: env.name, text: env.value };
-			  log(`[更新] 替换已有变量: ${env.name}`);
-			} else {
-			  log(`[跳过] 保留已有变量: ${env.name}`);
-			}
-		  } else {
-			bindings.push({ type: "plain_text", name: env.name, text: env.value });
-			log(`[新增] 添加新变量: ${env.name}`);
-		  }
-		});
-	  }
+
+    // --- 新增：处理 ENV 变量逻辑 ---
+    if (envs && envs.length > 0) {
+      log(`[提示] 处理附加环境变量 (${envs.length}个)...`);
+      envs.forEach(env => {
+        if (!env.name) return;
+        const existingIdx = bindings.findIndex(b => b.name === env.name);
+        if (existingIdx >= 0) {
+          if (env.action === 'replace') {
+            bindings[existingIdx] = { type: "plain_text", name: env.name, text: env.value };
+            log(`[更新] 替换已有变量: ${env.name}`);
+          } else {
+            log(`[跳过] 保留已有变量: ${env.name}`);
+          }
+        } else {
+          bindings.push({ type: "plain_text", name: env.name, text: env.value });
+          log(`[新增] 添加新变量: ${env.name}`);
+        }
+      });
+    }
+
     const metadata = { bindings };
     if (isESM) metadata.main_module = "_worker.js"; else metadata.body_part = "script";
     const form = new FormData();
@@ -330,36 +331,47 @@ async function sha256Hex(uint8array) {
 // ==================== Pages 部署核心 ====================
 async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = []) {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-  log(`处理 KV 绑定 [${kvName}]...`);
-
-  async function findKvNamespace() {
-    const res = await fetchWithTimeout(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
-      { headers },
-      30000
-    );
-    const data = await res.json();
-    if (!data.success) throw new Error(`查询 KV 失败: ${JSON.stringify(data.errors)}`);
-    return data.result.find(i => i.title === kvName) || null;
-  }
-
+  
   let kvId = null;
-  let existing = await findKvNamespace();
-
-  if (existing) {
-    if (kvAction === 'keep') {
-      log(`找到已存在同名 KV，执行保留策略...`);
-      kvId = existing.id;
-    } else {
-      log(`找到已存在同名 KV，正在删除旧数据以清空...`);
-      const delRes = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
-        { method: "DELETE", headers },
-        15000
+  if (kvName) {
+    log(`处理 KV 绑定 [${kvName}]...`);
+    async function findKvNamespace() {
+      const res = await fetchWithTimeout(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
+        { headers },
+        30000
       );
-      const delData = await delRes.json();
-      if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
-      
+      const data = await res.json();
+      if (!data.success) throw new Error(`查询 KV 失败: ${JSON.stringify(data.errors)}`);
+      return data.result.find(i => i.title === kvName) || null;
+    }
+
+    let existing = await findKvNamespace();
+
+    if (existing) {
+      if (kvAction === 'keep') {
+        log(`找到已存在同名 KV，执行保留策略...`);
+        kvId = existing.id;
+      } else {
+        log(`找到已存在同名 KV，正在删除旧数据以清空...`);
+        const delRes = await fetchWithTimeout(
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
+          { method: "DELETE", headers },
+          15000
+        );
+        const delData = await delRes.json();
+        if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
+        
+        const createRes = await fetchWithTimeout(
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
+          { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
+          30000
+        );
+        const createData = await createRes.json();
+        if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
+        kvId = createData.result.id;
+      }
+    } else {
       const createRes = await fetchWithTimeout(
         `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
         { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
@@ -369,20 +381,12 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
       if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
       kvId = createData.result.id;
     }
-  } else {
-    const createRes = await fetchWithTimeout(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-      { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-      30000
-    );
-    const createData = await createRes.json();
-    if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-    kvId = createData.result.id;
   }
 
   const projRes = await fetchWithTimeout(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    { headers }, 30000
+    { headers },
+    30000
   );
   const projData = await projRes.json();
   if (!projData.success) throw new Error(`获取 Pages 项目失败`);
@@ -390,15 +394,15 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
   const prodConfig = projData.result.deployment_configs?.production || {};
   const prevConfig = projData.result.deployment_configs?.preview || {};
   
-  // 1. 处理 KV
   let updatedKvNamespaces = prodConfig.kv_namespaces || {};
   let updatedPrevKvNamespaces = prevConfig.kv_namespaces || {};
+  
   if (kvId) {
     updatedKvNamespaces = { ...updatedKvNamespaces, KV: { namespace_id: kvId } };
     updatedPrevKvNamespaces = { ...updatedPrevKvNamespaces, KV: { namespace_id: kvId } };
   }
-
-  // 2. 处理 ENV
+  
+  // 处理环境变量
   let prodEnvVars = prodConfig.env_vars || {};
   let prevEnvVars = prevConfig.env_vars || {};
   
@@ -406,11 +410,9 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     log(`处理环境变量配置...`);
     envs.forEach(env => {
       if (!env.name) return;
-      // 处理 Production
       if (!prodEnvVars[env.name] || env.action === 'replace') {
         prodEnvVars[env.name] = { type: "plain_text", value: env.value };
       }
-      // 处理 Preview
       if (!prevEnvVars[env.name] || env.action === 'replace') {
         prevEnvVars[env.name] = { type: "plain_text", value: env.value };
       }
@@ -430,11 +432,11 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     30000
   );
   const patchData = await patchRes.json();
-  if (!patchData.success) throw new Error(`更新绑定失败`);
-  log(`[成功] KV 绑定已更新`);
+  if (!patchData.success) throw new Error(`更新项目配置失败`);
+  log(`[成功] 项目配置 (KV/ENV) 已更新`);
 }
 
-await updatePagesConfig(accountId, apiToken, projectName, kvName?.trim(), logs, log, kvAction, envs);
+async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = []) {
   const logs = [];
   const log = (msg) => logs.push(msg);
   try {
@@ -459,9 +461,12 @@ await updatePagesConfig(accountId, apiToken, projectName, kvName?.trim(), logs, 
       if (!create.success) throw new Error(`创建失败`);
     }
 
-    if (kvName && kvName.trim()) {
-      log(`[4/6] 更新 KV 绑定...`);
-      await updatePagesKVBinding(accountId, apiToken, projectName, kvName.trim(), logs, log, kvAction);
+    // 无论有没有 KV 只要有附加设置，就去更新配置
+    if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
+      log(`[4/6] 更新项目配置(KV/ENV)...`);
+      await updatePagesConfig(accountId, apiToken, projectName, kvName ? kvName.trim() : "", logs, log, kvAction, envs);
+    } else {
+      log(`[4/6] 无KV及ENV配置，跳过更新设置...`);
     }
 
     log(`[5/6] 构建 manifest...`);
@@ -499,12 +504,12 @@ await updatePagesConfig(accountId, apiToken, projectName, kvName?.trim(), logs, 
 }
 
 // ==================== 统一部署分发 ====================
-async function deployByType(type, id, token, kv, name, source, kvAction = 'keep') {
+async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = []) {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
   if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400 };
-  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction);
-  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction);
+  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs);
+  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs);
   return { success: false, error: "type 无效", logs: ["ERR"], status: 400 };
 }
 
@@ -513,18 +518,18 @@ async function handleUnifiedDeploy(request) {
   let p = {};
   if (ct.includes("application/json")) {
     const b = await request.json().catch(() => ({}));
-    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url };
+    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url, envs: b.envs || [] };
   } else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url") };
+    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), envs: [] }; // 表单暂不支持复杂的envs传递
   }
-  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction);
+  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
 async function handleGetDeploy(url) {
   const q = url.searchParams;
-  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", q.get("kvAction") || 'keep');
+  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", q.get("kvAction") || 'keep', []);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
@@ -536,7 +541,7 @@ async function handleDeployWorker(request) {
 
 async function handleDeployPages(request) {
   const b = await request.json().catch(() => ({}));
-  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.workerName, b.codeUrl, b.kvAction || 'keep', b.envs || []);
+  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, b.zipUrl, b.kvAction || 'keep', b.envs || []);
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -757,20 +762,23 @@ function getMainPage() {
 		  </div>
 	  </div>
 	  <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
+      
       <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
         <div style="flex: 1;"><label>KV 名称（可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
         <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
-	  <!-- ENV 设置区 -->
-		<div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px;">
-		  <label style="display:flex; align-items:center; cursor:pointer; color:#334155;">
-			<input type="checkbox" id="enableEnv" style="margin-right:8px;"> 附加环境变量 (ENV)
-		  </label>
-		  <div id="envContainer" style="display:none; margin-top:10px;">
-			<div id="envList"></div>
-			<button class="btn-primary" id="btnAddEnv" style="background:#e2e8f0; color:#475569; padding:6px 12px; font-size:12px; margin-top:8px;">➕ 添加变量</button>
-		  </div>
-		</div>
+
+      <!-- ENV 设置区 -->
+      <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
+        <label style="display:flex; align-items:center; cursor:pointer; color:#334155; margin-bottom:0;">
+          <input type="checkbox" id="enableEnv" style="margin-right:8px; width:auto;"> 附加环境变量 (ENV)
+        </label>
+        <div id="envContainer" style="display:none; margin-top:10px;">
+          <div id="envList"></div>
+          <button class="btn-primary" id="btnAddEnv" style="background:#e2e8f0; color:#475569; padding:6px 12px; font-size:12px; margin-top:8px;">➕ 添加变量</button>
+        </div>
+      </div>
+
       <div class="accordion">
         <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▶</span></div>
         <div id="workerPanel" class="accordion-content">
@@ -800,60 +808,6 @@ API Token: cfcut_...
 KV 名称: MY_KV_STORE （可留空）
 项目名称: my-worker-app
 代码源地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js</code></pre>
-            <p><strong>Pages 示例：</strong></p>
-            <pre><code>Account ID: 8ab2...c8d0
-API Token: cfcut_...
-KV 名称: MY_KV_STORE （可留空）
-项目名称: my-pages-site
-ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
-          </div>
-          <div class="info-section">
-            <h3>📡 POST 部署</h3>
-            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式。</p>
-            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 AUTH_PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
-            <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
-            <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
-  method: "POST",
-  headers: {
-    "Authorization": "Bearer 您的系统访问密码",
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    type: "worker",
-    id: "YOUR_ACCOUNT_ID",
-    token: "YOUR_API_TOKEN",
-    kv: "MY_KV_STORE",
-    kvAction: "keep",
-    name: "my-worker-app",
-    source: "default"
-  })
-}).then(res => res.json()).then(console.log);</code></pre>
-            <p><strong>cURL JSON 格式（使用 URL 传参鉴权）：</strong></p>
-            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy?pwd=您的系统访问密码" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "type": "worker",
-    "id": "YOUR_ACCOUNT_ID",
-    "token": "YOUR_API_TOKEN",
-    "kv": "MY_KV_STORE",
-    "kvAction": "keep",
-    "source": "default",
-    "name": "my-worker-app"
-  }'</code></pre>
-            <p><strong>cURL 表单格式（使用 Header 鉴权）：</strong></p>
-            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
-  -H "Authorization: Bearer 您的系统访问密码" \\
-  -H "Content-Type: application/x-www-form-urlencoded" \\
-  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
-            <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
-          </div>
-          <div class="info-section">
-            <h3>🔗 GET 部署</h3>
-            <p>直接在浏览器地址栏或脚本中通过 URL 调用。</p>
-            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
-            <p>Pages 部署示例：</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
           </div>
         </div>
       </div>
@@ -880,12 +834,6 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
   <script>
 	${GLOBAL_SCRIPT}
     (function(){
-      // 预先拉取账户数据以备自动更新使用
-      let allAccountsForUpdate = [];
-      fetch('/api/accounts').then(res => res.json()).then(data => {
-        if (data.success) allAccountsForUpdate = data.accounts || [];
-      }).catch(err => console.error('账户列表加载失败', err));
-
       // 获取版本号并对比
       fetch('https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/version.json')
         .then(res => res.json())
@@ -897,12 +845,6 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
               vBtn.textContent = '🎁 发现新版 v' + latestVersion;
               vBtn.style.backgroundColor = '#10b981';
               vBtn.style.color = '#fff';
-              
-              // 绑定呼出弹窗的事件
-              vBtn.addEventListener('click', () => {
-                document.getElementById('updateModalText').innerText = '当前版本: v${CURRENT_VERSION}\\n最新版本: v' + latestVersion;
-                document.getElementById('updateModal').classList.add('active');
-              });
             } else {
               vBtn.textContent = 'v${CURRENT_VERSION} (已最新)';
               vBtn.style.color = '#7f8c8d';
@@ -912,63 +854,29 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           }
         }).catch(err => console.error('获取版本失败', err));
 
-      // 弹窗：关闭
-      document.getElementById('btnCancelUpdate')?.addEventListener('click', () => {
-        document.getElementById('updateModal').classList.remove('active');
-      });
-
-      // 弹窗：确认更新
-      document.getElementById('btnConfirmUpdate')?.addEventListener('click', async () => {
-        document.getElementById('updateModal').classList.remove('active');
-        const output = document.getElementById('logOutput');
-        output.value = '准备自动更新系统...\\n';
-        
-        // 尝试从列表中找出对应的 AccountID 和 Token
-        const domain = window.location.hostname; // 获取当前网站域名
-        
-        // 匹配逻辑：1. 标识包含当前域名 2. 账号下有名为 'install' 的 worker 3. 实在没有就用第一个
-        let targetAcc = allAccountsForUpdate.find(a => domain.includes(a.identifier) || (a.identifier && a.identifier.includes(domain)));
-        if (!targetAcc) targetAcc = allAccountsForUpdate.find(a => a.workers && a.workers.some(w => w.name === 'install'));
-        if (!targetAcc && allAccountsForUpdate.length > 0) targetAcc = allAccountsForUpdate[0];
-        
-        if (!targetAcc) {
-           output.value += '[错误] 无法定位部署账户，请先在【常用部署】中配置相关 AccountID 及 Token。\\n';
-           return;
-        }
-        
-        // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认 keep
-        let kvName = "";
-        const installWorker = targetAcc.workers ? targetAcc.workers.find(w => w.name === 'install') : null;
-        if (installWorker && installWorker.kvName) kvName = installWorker.kvName;
-        
-        output.value += '[信息] 匹配账户标识: ' + targetAcc.identifier + '\\n';
-        output.value += '[信息] 目标更新项目: install\\n';
-        output.scrollTop = output.scrollHeight;
-
-        const payload = {
-          accountId: targetAcc.accountId,
-          apiToken: targetAcc.token,
-          kvName: kvName,
-          kvAction: 'keep', // KV 保留
-          workerName: 'install',
-          codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
-        };
-
-        try {
-          const res = await fetch('/api/deploy-worker', {
-            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-          });
-          const data = await res.json();
-          output.value += (data.logs || []).join('\\n') + '\\n';
-          if (data.success) output.value += '\\n✅ 系统自动更新成功！请稍候刷新页面即可生效。';
-        } catch (err) {
-          output.value += '[错误] ' + err.message + '\\n';
-        }
-        output.scrollTop = output.scrollHeight;
-      });
-
       const kvInput = document.getElementById('kvName'), kvAction = document.getElementById('kvAction');
       kvInput.addEventListener('input', () => kvAction.disabled = !kvInput.value.trim());
+
+      // ENV 面板逻辑
+      const envContainer = document.getElementById('envContainer');
+      document.getElementById('enableEnv').addEventListener('change', function() {
+        envContainer.style.display = this.checked ? 'block' : 'none';
+        if(this.checked && document.getElementById('envList').children.length === 0) addEnvRow();
+      });
+      document.getElementById('btnAddEnv').addEventListener('click', () => addEnvRow());
+
+      function addEnvRow() {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex; gap:6px; margin-bottom:8px; align-items:center;';
+        div.innerHTML = \`
+          <input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
+          <input type="text" class="env-value" placeholder="变量值" style="flex:3;">
+          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">遇同名保留</option><option value="replace">遇同名替换</option></select>
+          <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">✖</button>
+        \`;
+        div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
+        document.getElementById('envList').appendChild(div);
+      }
 
       document.querySelectorAll('.accordion-header').forEach(h => h.addEventListener('click', function(){
         const target = document.getElementById(this.dataset.target);
@@ -987,12 +895,22 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const src = document.getElementById(type === 'worker' ? 'workerCodeUrl' : 'pagesZipUrl').value.trim();
         if (!accountId || !apiToken || !name) return alert('请填写必填项');
         
+        let envs = [];
+        if (document.getElementById('enableEnv').checked) {
+          document.querySelectorAll('#envList > div').forEach(row => {
+            const envName = row.querySelector('.env-name').value.trim();
+            const envValue = row.querySelector('.env-value').value.trim();
+            const envAction = row.querySelector('.env-action').value;
+            if (envName) envs.push({ name: envName, value: envValue, action: envAction });
+          });
+        }
+
         const output = document.getElementById('logOutput');
         output.value = '部署中...\\n'; output.scrollTop = output.scrollHeight;
         
         const payload = type === 'worker' 
-          ? {accountId, apiToken, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src}
-          : {accountId, apiToken, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src};
+          ? {accountId, apiToken, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs}
+          : {accountId, apiToken, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs};
           
         const res = await fetch(type === 'worker' ? '/api/deploy-worker' : '/api/deploy-pages', {
           method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
@@ -1002,46 +920,6 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       }
       document.getElementById('btnDeployWorker').addEventListener('click', () => runDeploy('worker'));
       document.getElementById('btnDeployPages').addEventListener('click', () => runDeploy('pages'));
-	  
-		const envContainer = document.getElementById('envContainer');
-		document.getElementById('enableEnv').addEventListener('change', function() {
-		  envContainer.style.display = this.checked ? 'block' : 'none';
-		  if(this.checked && document.getElementById('envList').children.length === 0) addEnvRow();
-		});
-		document.getElementById('btnAddEnv').addEventListener('click', () => addEnvRow());
-
-		function addEnvRow() {
-		  const div = document.createElement('div');
-		  div.style.cssText = 'display:flex; gap:6px; margin-bottom:8px; align-items:center;';
-		  div.innerHTML = `
-			<input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
-			<input type="text" class="env-value" placeholder="变量值" style="flex:3;">
-			<select class="env-action" style="flex:1;"><option value="keep">遇同名保留</option><option value="replace">遇同名替换</option></select>
-			<button class="btn-icon r-env-btn" style="color:#ef4444">${ICONS.del}</button>
-		  `;
-		  div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
-		  document.getElementById('envList').appendChild(div);
-		}
-
-		// 修改 runDeploy 函数，收集 envs 数据
-		async function runDeploy(type) {
-		  // ... (保留原有取值)[cite: 1]
-		  let envs = [];
-		  if (document.getElementById('enableEnv').checked) {
-			document.querySelectorAll('#envList > div').forEach(row => {
-			  const name = row.querySelector('.env-name').value.trim();
-			  const value = row.querySelector('.env-value').value.trim();
-			  const action = row.querySelector('.env-action').value;
-			  if (name) envs.push({ name, value, action });
-			});
-		  }
-		  
-		  const payload = type === 'worker' 
-			? {accountId, apiToken, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs}
-			: {accountId, apiToken, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs};
-			
-		  // ... (执行 fetch 请求)[cite: 1]
-		}
     })();
   </script>
 </body></html>`;
@@ -1075,11 +953,10 @@ function getDashboardPage() {
     
     .deploy-btn { width: 100%; padding: 12px; font-size: 15px; margin-top: 15px; }
     @media (max-width: 600px) {
-      /* 移动端细微调整：减小 padding，保留双列 */
       .project-columns { gap: 6px; }
       .column-header { padding: 8px; font-size: 12px; }
       .project-title { font-size: 12px; }
-      .temp-deploy-block { grid-template-columns: 1fr 1fr; } /* 临时部署框在手机上两行两列 */
+      .temp-deploy-block { grid-template-columns: 1fr 1fr; }
     }
   </style></head><body>
   <div class="container">
@@ -1140,11 +1017,11 @@ function getDashboardPage() {
               '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV名(可选)">' +
               '<select class="temp-kv-action" data-acc-index="' + accIndex + '" disabled><option value="keep">保留</option><option value="clear">清空</option></select>' +
               '<input type="text" class="temp-source" data-acc-index="' + accIndex + '" placeholder="源地址(可选)">' +
-			  '<div class="temp-env-wrap" style="grid-column: 1 / -1; margin-top: 5px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">' +
-				'<label class="temp-cb-wrap" style="margin-bottom:6px;"><input type="checkbox" class="temp-env-cb" data-acc-index="' + accIndex + '"> 为本组选中项目附加 ENV</label>' +
-				'<div class="temp-env-list" data-acc-index="' + accIndex + '" style="display:none; flex-direction:column; gap:6px;"></div>' +
-				'<button class="add-env-btn" data-acc-index="' + accIndex + '" style="display:none; background:#e2e8f0; color:#475569; padding:4px 8px; font-size:12px; border-radius:4px; border:none; cursor:pointer; margin-top:6px;">➕ 增加变量</button>' +
-			  '</div>' +
+              '<div class="temp-env-wrap" style="grid-column: 1 / -1; margin-top: 5px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">' +
+                '<label class="temp-cb-wrap" style="margin-bottom:6px; cursor:pointer;"><input type="checkbox" class="temp-env-cb" data-acc-index="' + accIndex + '"> 为本组选中项目附加 ENV</label>' +
+                '<div class="temp-env-list" data-acc-index="' + accIndex + '" style="display:none; flex-direction:column; gap:6px;"></div>' +
+                '<button class="add-env-btn" data-acc-index="' + accIndex + '" style="display:none; background:#e2e8f0; color:#475569; padding:4px 8px; font-size:12px; border-radius:4px; border:none; cursor:pointer; margin-top:6px;">➕ 增加变量</button>' +
+              '</div>' +
             '</div>' +
           '</div>';
         container.appendChild(accDiv);
@@ -1162,6 +1039,30 @@ function getDashboardPage() {
       document.querySelectorAll('.project-title').forEach(t => t.addEventListener('click', function(e) {
         if (e.target.tagName === 'INPUT') return;
         this.nextElementSibling.classList.toggle('active');
+      }));
+
+      // 处理环境变量面板的展示和隐藏
+      document.querySelectorAll('.temp-env-cb').forEach(cb => cb.addEventListener('change', function() {
+        const idx = this.dataset.accIndex;
+        const list = document.querySelector('.temp-env-list[data-acc-index="'+idx+'"]');
+        const btn = document.querySelector('.add-env-btn[data-acc-index="'+idx+'"]');
+        list.style.display = this.checked ? 'flex' : 'none';
+        btn.style.display = this.checked ? 'inline-block' : 'none';
+        if (this.checked && list.children.length === 0) btn.click();
+      }));
+
+      // 处理“增加变量”按钮点击
+      document.querySelectorAll('.add-env-btn').forEach(btn => btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        const list = document.querySelector('.temp-env-list[data-acc-index="' + this.dataset.accIndex + '"]');
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex; gap:6px; align-items:center;';
+        div.innerHTML = '<input type="text" class="e-name" placeholder="变量名(如API_KEY)" style="flex:2; font-size:12px; padding:6px;">' +
+                        '<input type="text" class="e-val" placeholder="变量值" style="flex:3; font-size:12px; padding:6px;">' +
+                        '<select class="e-act" style="flex:1; font-size:12px; padding:6px;"><option value="keep">遇同名保留</option><option value="replace">遇同名替换</option></select>' +
+                        '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
+        div.querySelector('.r-env').addEventListener('click', () => div.remove());
+        list.appendChild(div);
       }));
 
       // 复选框联动
@@ -1196,29 +1097,6 @@ function getDashboardPage() {
         const accCb = document.querySelector('.account-checkbox[data-acc-index="' + idx + '"]');
         if (accCb) accCb.checked = (all.length > 0 && all.length === checked.length);
       }
-	  // ENV联动
-		document.querySelectorAll('.temp-env-cb').forEach(cb => cb.addEventListener('change', function() {
-		  const idx = this.dataset.accIndex;
-		  const list = document.querySelector('.temp-env-list[data-acc-index="'+idx+'"]');
-		  const btn = document.querySelector('.add-env-btn[data-acc-index="'+idx+'"]');
-		  list.style.display = this.checked ? 'flex' : 'none';
-		  btn.style.display = this.checked ? 'inline-block' : 'none';
-		  if (this.checked && list.children.length === 0) btn.click();
-		}));
-
-		document.querySelectorAll('.add-env-btn').forEach(btn => btn.addEventListener('click', function(e) {
-		  e.preventDefault();
-		  const idx = this.dataset.accIndex;
-		  const list = document.querySelector('.temp-env-list[data-acc-index="'+idx+'"]');
-		  const div = document.createElement('div');
-		  div.style.cssText = 'display:flex; gap:6px; align-items:center;';
-		  div.innerHTML = '<input type="text" class="e-name" placeholder="变量名" style="flex:2; font-size:12px; padding:6px;">' +
-						  '<input type="text" class="e-val" placeholder="变量值" style="flex:3; font-size:12px; padding:6px;">' +
-						  '<select class="e-act" style="flex:1; font-size:12px; padding:6px;"><option value="keep">保留</option><option value="replace">替换</option></select>' +
-						  '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;">✖</span>';
-		  div.querySelector('.r-env').addEventListener('click', () => div.remove());
-		  list.appendChild(div);
-		}));
     }
 
     function renderProjects(projects, type, accIndex) {
@@ -1252,23 +1130,31 @@ function getDashboardPage() {
       if (selected.length === 0) return alert('请先勾选需要部署的项目');
       
       btn.disabled = true; output.value = '开始批量部署...\\n';
+      
       for (let i = 0; i < selected.length; i++) {
         const item = selected[i];
         output.value += '\\n[' + (i+1) + '/' + selected.length + '] ' + item.account.identifier + ' <- ' + item.proj.name + '\\n';
         output.scrollTop = output.scrollHeight;
         try {
-			const currentAccIndex = allAccounts.indexOf(item.account);
-			  const envCb = document.querySelector('.temp-env-cb[data-acc-index="' + currentAccIndex + '"]');
-			  let envs = [];
-			  if (envCb && envCb.checked) {
-				document.querySelectorAll('.temp-env-list[data-acc-index="' + currentAccIndex + '"] > div').forEach(row => {
-				  const name = row.querySelector('.e-name').value.trim();
-				  const value = row.querySelector('.e-val').value.trim();
-				  const action = row.querySelector('.e-act').value;
-				  if (name) envs.push({ name, value, action });
-				});
-			  }
-          const payload = { type: item.type, id: item.account.accountId, token: item.account.token, kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', name: item.proj.name, source: item.proj.codeUrl || 'default', envs: envs};
+          // --- 收集当前项目对应账户下的 ENV 变量 ---
+          const currentAccIndex = allAccounts.indexOf(item.account);
+          const envCb = document.querySelector('.temp-env-cb[data-acc-index="' + currentAccIndex + '"]');
+          let envs = [];
+          if (envCb && envCb.checked) {
+            document.querySelectorAll('.temp-env-list[data-acc-index="' + currentAccIndex + '"] > div').forEach(row => {
+              const name = row.querySelector('.e-name').value.trim();
+              const value = row.querySelector('.e-val').value.trim();
+              const action = row.querySelector('.e-act').value;
+              if (name) envs.push({ name, value, action });
+            });
+          }
+
+          const payload = { 
+            type: item.type, id: item.account.accountId, token: item.account.token, 
+            kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', 
+            name: item.proj.name, source: item.proj.codeUrl || 'default',
+            envs: envs
+          };
           const res = await fetch('/api/deploy', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
           const data = await res.json();
           output.value += (data.logs || []).join('\\n') + '\\n';
@@ -1277,10 +1163,8 @@ function getDashboardPage() {
       }
       output.value += '\\n========== 部署结束 ==========\\n';
       btn.disabled = false;
-	  
-	  
     });
-	
+
     loadAccounts();
   </script>
 </body></html>`;
@@ -1497,7 +1381,6 @@ function getAccountsPage() {
     function buildDynamicRow(type, name='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
       
-      // 修复：为下拉框 i-action 增加内联样式：width:75px 和 flex-shrink:0，防止挤占 codeUrl 空间
       div.innerHTML = 
         '<input type="text" class="i-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
         '<input type="text" class="i-kv" placeholder="KV名称" value="' + escapeHtml(kvName) + '">' +
