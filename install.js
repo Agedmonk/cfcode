@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211355"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202608211418"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -805,9 +805,65 @@ function getMainPage() {
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
-KV 名称: MY_KV_STORE （可留空）
+KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
+变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-worker-app
 代码源地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js</code></pre>
+            <p><strong>Pages 示例：</strong></p>
+            <pre><code>Account ID: 8ab2...c8d0
+API Token: cfcut_...
+KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
+变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
+项目名称: my-pages-site
+ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
+          </div>
+          <div class="info-section">
+            <h3>📡 POST 部署</h3>
+            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式。</p>
+            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 AUTH_PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
+            <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
+            <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer 您的系统访问密码",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    type: "worker",
+    id: "YOUR_ACCOUNT_ID",
+    token: "YOUR_API_TOKEN",
+    kv: "MY_KV_STORE",
+    kvAction: "keep",
+    name: "my-worker-app",
+    source: "default"
+  })
+}).then(res => res.json()).then(console.log);</code></pre>
+            <p><strong>cURL JSON 格式（使用 URL 传参鉴权）：</strong></p>
+            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy?pwd=您的系统访问密码" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "type": "worker",
+    "id": "YOUR_ACCOUNT_ID",
+    "token": "YOUR_API_TOKEN",
+    "kv": "MY_KV_STORE",
+    "kvAction": "keep",
+    "source": "default",
+    "name": "my-worker-app"
+  }'</code></pre>
+            <p><strong>cURL 表单格式（使用 Header 鉴权）：</strong></p>
+            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
+  -H "Authorization: Bearer 您的系统访问密码" \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
+            <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
+          </div>
+          <div class="info-section">
+            <h3>🔗 GET 部署</h3>
+            <p>直接在浏览器地址栏或脚本中通过 URL 调用。</p>
+            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
+            <p>Pages 部署示例：</p>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
           </div>
         </div>
       </div>
@@ -938,7 +994,7 @@ KV 名称: MY_KV_STORE （可留空）
         div.innerHTML = \`
           <input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
           <input type="text" class="env-value" placeholder="变量值" style="flex:3;">
-          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留原值</option><option value="replace">替换原值</option></select>
+          <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留原值</option><option value="replace">使用新值</option></select>
           <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">✖</button>
         \`;
         div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
@@ -992,6 +1048,7 @@ KV 名称: MY_KV_STORE （可留空）
 </body></html>`;
 }
 
+// ==================== 常用部署页面 ====================
 // ==================== 常用部署页面 ====================
 function getDashboardPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>常用部署</title><style>${GLOBAL_STYLE}
@@ -1096,7 +1153,6 @@ function getDashboardPage() {
       
       if (visibleCount === 0) { container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:20px 0;">暂无显示的账户，请前往设置添加。</p>'; return; }
 
-      // 展开/收起事件
       document.querySelectorAll('.account-header').forEach(h => h.addEventListener('click', function(e) {
         if (e.target.tagName === 'INPUT') return; 
         const list = this.nextElementSibling;
@@ -1108,31 +1164,47 @@ function getDashboardPage() {
         this.nextElementSibling.classList.toggle('active');
       }));
 
-      // 处理环境变量面板的展示和隐藏
+      // 生成 ENV 输入行的通用函数
+      function addDashboardEnvRow(listNode, name = '', val = '', action = 'keep') {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex; gap:6px; align-items:center;';
+        div.innerHTML = '<input type="text" class="e-name" placeholder="变量名(如API_KEY)" value="' + escapeHtml(name) + '" style="flex:2; font-size:12px; padding:6px;">' +
+                        '<input type="text" class="e-val" placeholder="变量值" value="' + escapeHtml(val) + '" style="flex:3; font-size:12px; padding:6px;">' +
+                        '<select class="e-act" style="flex:1; font-size:12px; padding:6px;">' +
+                          '<option value="keep" ' + (action==='keep'?'selected':'') + '>遇同名保留</option>' +
+                          '<option value="replace" ' + (action==='replace'?'selected':'') + '>遇同名替换</option>' +
+                        '</select>' +
+                        '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
+        div.querySelector('.r-env').addEventListener('click', () => div.remove());
+        listNode.appendChild(div);
+      }
+
+      // 处理环境变量面板的展示和隐藏（并自动加载默认配置）
       document.querySelectorAll('.temp-env-cb').forEach(cb => cb.addEventListener('change', function() {
-        const idx = this.dataset.accIndex;
+        const idx = parseInt(this.dataset.accIndex);
         const list = document.querySelector('.temp-env-list[data-acc-index="'+idx+'"]');
         const btn = document.querySelector('.add-env-btn[data-acc-index="'+idx+'"]');
         list.style.display = this.checked ? 'flex' : 'none';
         btn.style.display = this.checked ? 'inline-block' : 'none';
-        if (this.checked && list.children.length === 0) btn.click();
+        
+        // 如果勾选且当前列表为空，则加载该账户的默认 envs
+        if (this.checked && list.children.length === 0) {
+          const account = allAccounts[idx];
+          if (account.envs && account.envs.length > 0) {
+            account.envs.forEach(env => addDashboardEnvRow(list, env.name, env.value, env.action));
+          } else {
+            addDashboardEnvRow(list); // 如果没有默认配置，添加一个空行
+          }
+        }
       }));
 
       // 处理“增加变量”按钮点击
       document.querySelectorAll('.add-env-btn').forEach(btn => btn.addEventListener('click', function(e) {
         e.preventDefault();
         const list = document.querySelector('.temp-env-list[data-acc-index="' + this.dataset.accIndex + '"]');
-        const div = document.createElement('div');
-        div.style.cssText = 'display:flex; gap:6px; align-items:center;';
-        div.innerHTML = '<input type="text" class="e-name" placeholder="变量名(如API_KEY)" style="flex:2; font-size:12px; padding:6px;">' +
-                        '<input type="text" class="e-val" placeholder="变量值" style="flex:3; font-size:12px; padding:6px;">' +
-                        '<select class="e-act" style="flex:1; font-size:12px; padding:6px;"><option value="keep">遇同名保留</option><option value="replace">遇同名替换</option></select>' +
-                        '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
-        div.querySelector('.r-env').addEventListener('click', () => div.remove());
-        list.appendChild(div);
+        addDashboardEnvRow(list);
       }));
 
-      // 复选框联动
       document.querySelectorAll('.temp-kv').forEach(input => input.addEventListener('input', function() {
         const sel = document.querySelector('.temp-kv-action[data-acc-index="' + this.dataset.accIndex + '"]');
         if (sel) sel.disabled = !this.value.trim();
@@ -1238,6 +1310,7 @@ function getDashboardPage() {
 }
 
 // ==================== 账户管理页面 ====================
+f// ==================== 账户管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -1302,6 +1375,14 @@ function getAccountsPage() {
 			<div class="pwd-toggle" onclick="togglePwd(this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg></div>
 		  </div>
 	  </div>
+
+      <!-- 新增：账户级别默认环境变量设置区 -->
+      <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
+        <label style="color:#334155; margin-bottom:5px;">默认环境变量 (ENV) <span style="font-size:11px;color:#94a3b8;font-weight:normal;">会在常用部署页面自动加载</span></label>
+        <div id="accEnvList" style="display:flex; flex-direction:column; gap:6px;"></div>
+        <button id="btnAddAccEnv" class="add-btn" style="width:auto; margin-top:8px;">➕ 添加默认变量</button>
+      </div>
+
       <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="editAccountShow" checked> 在部署页显示此账户</label></div>
       
       <div class="form-group"><label>🚀 Workers 项目</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">➕ 添加 Worker</button></div>
@@ -1444,6 +1525,25 @@ function getAccountsPage() {
       }; reader.readAsText(file);
     });
 
+    /* 账户级别默认 ENV 行构建 */
+    function buildAccEnvRow(name='', value='', action='keep') {
+      const div = document.createElement('div');
+      div.className = 'acc-env-item';
+      div.style.cssText = 'display:flex; gap:6px; align-items:center;';
+      div.innerHTML = \`
+        <input type="text" class="e-name" placeholder="变量名" value="\${escapeHtml(name)}" style="flex:2; padding:6px; font-size:12px;">
+        <input type="text" class="e-val" placeholder="变量值" value="\${escapeHtml(value)}" style="flex:3; padding:6px; font-size:12px;">
+        <select class="e-act" style="flex:1; padding:6px; font-size:12px;">
+          <option value="keep" \${action==='keep'?'selected':''}>保留</option>
+          <option value="replace" \${action==='replace'?'selected':''}>替换</option>
+        </select>
+        <span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>
+      \`;
+      div.querySelector('.r-env').addEventListener('click', () => div.remove());
+      document.getElementById('accEnvList').appendChild(div);
+    }
+    document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildAccEnvRow(); });
+
     /* 编辑弹窗逻辑 */
     function buildDynamicRow(type, name='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
@@ -1470,14 +1570,20 @@ function getAccountsPage() {
     function openAdd() {
       editingIdentifier = null; document.getElementById('modalTitle').textContent = '添加账户';
       document.getElementById('editIdentifier').value = ''; document.getElementById('editAccountId').value = ''; document.getElementById('editToken').value = '';
+      document.getElementById('accEnvList').innerHTML = ''; // 清空 ENV
       document.getElementById('editAccountShow').checked = true;
       document.getElementById('workerList').innerHTML = ''; document.getElementById('pagesList').innerHTML = '';
       document.getElementById('editModal').classList.add('active');
     }
+    
     function openEdit(id) {
       const acc = accounts.find(a => a.identifier === id); if (!acc) return;
       editingIdentifier = id; document.getElementById('modalTitle').textContent = '编辑: ' + id;
       document.getElementById('editIdentifier').value = acc.identifier; document.getElementById('editAccountId').value = acc.accountId; document.getElementById('editToken').value = acc.token;
+      
+      document.getElementById('accEnvList').innerHTML = ''; // 加载 ENV
+      (acc.envs||[]).forEach(e => buildAccEnvRow(e.name, e.value, e.action));
+      
       document.getElementById('editAccountShow').checked = acc.show !== false;
       document.getElementById('workerList').innerHTML = ''; (acc.workers||[]).forEach(w => buildDynamicRow('worker', w.name, w.kvName, w.codeUrl, w.kvAction, w.show));
       document.getElementById('pagesList').innerHTML = ''; (acc.pages||[]).forEach(p => buildDynamicRow('pages', p.name, p.kvName, p.codeUrl, p.kvAction, p.show));
@@ -1499,7 +1605,18 @@ function getAccountsPage() {
         show: el.querySelector('.i-show').checked
       })).filter(i => i.name);
       
-      const payload = { identifier, accountId, token, show: document.getElementById('editAccountShow').checked, workers: getList('workerList'), pages: getList('pagesList') };
+      // 获取账户级别的 ENV 数据
+      const getAccEnvs = () => Array.from(document.querySelectorAll('#accEnvList .acc-env-item')).map(el => ({
+        name: el.querySelector('.e-name').value.trim(),
+        value: el.querySelector('.e-val').value.trim(),
+        action: el.querySelector('.e-act').value
+      })).filter(i => i.name);
+      
+      const payload = { 
+        identifier, accountId, token, show: document.getElementById('editAccountShow').checked, 
+        envs: getAccEnvs(), workers: getList('workerList'), pages: getList('pagesList') 
+      };
+      
       const data = await (await fetch('/api/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
       if (data.success) { document.getElementById('editModal').classList.remove('active'); loadAccounts(); } else alert('保存失败');
     });
