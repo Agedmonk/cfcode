@@ -1,3 +1,5 @@
+//v0.0.2
+
 const defaultUrl = 'https://dl.xianxintang.com/pc/lx-music-sourceV5.js';
 
 export default {
