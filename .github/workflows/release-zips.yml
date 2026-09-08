@@ -1,4 +1,4 @@
-name: 打包并发布文件
+name: 打包发布文件并推送到公共发布区
 
 on:
   push:
@@ -12,24 +12,23 @@ on:
       - 'getnodes.js'
       - 'getnodes_old.js'
       - 'mirror.js'
-  workflow_dispatch: # 允许手动触发全量打包
+  workflow_dispatch:
 
 jobs:
   release-zips:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 允许对 Release 进行读写
+      contents: write # 允许向当前仓库的 Release 写入
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 获取完整提交历史，用于精准比对文件差异
+          fetch-depth: 0
 
       - name: 生成 ZIP 文件
         id: package
         run: |
-          # 1. 定义 JS 文件到 ZIP 包的映射关系
           declare -A file_map=(
             ["_worker.js"]="worker.zip"
             ["install.js"]="install.zip"
@@ -42,75 +41,77 @@ jobs:
 
           UPLOAD_LIST=""
 
-          # 2. 判断触发方式
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "触发方式: 手动执行 (workflow_dispatch)"
-            echo "操作: 重新生成所有配置的 ZIP 文件"
-            
+            echo "触发方式: 手动执行 - 打包全部 ZIP"
             for js_file in "${!file_map[@]}"; do
               if [ -f "$js_file" ]; then
-                zip_file="${file_map[$js_file]}"
-                echo "打包: $js_file -> $zip_file"
-                zip "$zip_file" "$js_file"
-                UPLOAD_LIST="$UPLOAD_LIST $zip_file"
+                zip "${file_map[$js_file]}" "$js_file"
+                UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
               fi
             done
           else
-            echo "触发方式: 代码推送 (push)"
-            echo "操作: 仅生成本次变动文件的 ZIP"
-            
-            # 兼容第一次提交或 before 节点不存在的情况
+            echo "触发方式: 自动触发 - 仅打包变动的文件"
             if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
               changed_files=$(git ls-files)
             else
               changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
             fi
-            
-            echo "本次变动的文件列表:"
-            echo "$changed_files"
 
-            # 遍历并仅打包有变动的文件
             for js_file in "${!file_map[@]}"; do
               if echo "$changed_files" | grep -q "^$js_file$"; then
                 if [ -f "$js_file" ]; then
-                  zip_file="${file_map[$js_file]}"
-                  echo "检测到修改，打包: $js_file -> $zip_file"
-                  zip "$zip_file" "$js_file"
-                  UPLOAD_LIST="$UPLOAD_LIST $zip_file"
+                  zip "${file_map[$js_file]}" "$js_file"
+                  UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
                 fi
               fi
             done
           fi
 
-          # 3. 规范化输出列表，供下一步使用
           UPLOAD_LIST=$(echo $UPLOAD_LIST | xargs)
 
           if [ -z "$UPLOAD_LIST" ]; then
-            echo "没有需要打包和发布的文件。"
             echo "has_assets=false" >> $GITHUB_OUTPUT
           else
-            echo "准备上传的文件列表: $UPLOAD_LIST"
             echo "has_assets=true" >> $GITHUB_OUTPUT
             echo "UPLOAD_LIST=$UPLOAD_LIST" >> $GITHUB_ENV
           fi
 
-      - name: 提交到 Release
+      - name: 发布 1/2：推送到【当前仓库】的 Release
         if: steps.package.outputs.has_assets == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 统一发布到 "latest" 标签
           TAG_NAME="latest"
           RELEASE_NAME="Latest Auto Build"
           
-          # 检查名为 latest 的 Release 是否已存在
           if ! gh release view $TAG_NAME &>/dev/null; then
-            echo "Release '$TAG_NAME' 不存在，正在新建..."
+            echo "当前仓库 Release 不存在，正在新建..."
             gh release create $TAG_NAME $UPLOAD_LIST \
               --title "$RELEASE_NAME" \
-              --notes "自动化构建生成的最新 ZIP 压缩包。"
+              --notes "内部构建生成的最新 ZIP 压缩包。"
           else
-            echo "Release '$TAG_NAME' 已存在，正在覆盖更新对应的 ZIP 文件..."
-            # 使用 --clobber 覆盖上传已更新的文件，Release 中原有的其他文件不受影响
+            echo "当前仓库 Release 已存在，正在覆盖更新..."
             gh release upload $TAG_NAME $UPLOAD_LIST --clobber
+          fi
+
+      - name: 发布 2/2：推送到【新建的 public 仓库】的 Release
+        if: steps.package.outputs.has_assets == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          TAG_NAME="latest"
+          RELEASE_NAME="Latest Auto Build"
+          
+          # 自动获取当前用户，拼接得到目标仓库名，如: NicholasLai/public
+          TARGET_REPO="${{ github.repository_owner }}/public"
+          
+          if ! gh release view $TAG_NAME --repo $TARGET_REPO &>/dev/null; then
+            echo "目标仓库 $TARGET_REPO Release 不存在，正在新建..."
+            gh release create $TAG_NAME $UPLOAD_LIST \
+              --repo $TARGET_REPO \
+              --title "$RELEASE_NAME" \
+              --notes "公开分发：自动化构建生成的最新 ZIP 压缩包。"
+          else
+            echo "目标仓库 $TARGET_REPO Release 已存在，正在覆盖更新..."
+            gh release upload $TAG_NAME $UPLOAD_LIST --repo $TARGET_REPO --clobber
           fi
