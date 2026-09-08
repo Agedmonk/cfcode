@@ -68,7 +68,12 @@ jobs:
           fi
 
           # ================== 新增逻辑 ==================
-          # 如果 version.json 存在，始终将其加入到上传列表中
+          # 如果 _worker.js / version.json 存在，始终将其加入到上传列表中
+          if [ -f "_worker.js" ]; then
+            echo "发现 _worker.js，添加到发布列表。"
+            UPLOAD_LIST="$UPLOAD_LIST _worker.js"
+          fi
+          
           if [ -f "version.json" ]; then
             echo "发现 version.json，添加到发布列表。"
             UPLOAD_LIST="$UPLOAD_LIST version.json"
