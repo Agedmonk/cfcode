@@ -1,4 +1,4 @@
-name: 构建install.js打包与版本同步
+name: 提取install版本号并同步
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-sync:
+  update-version:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,25 +40,21 @@ jobs:
           echo "{\"version\": \"$EXTRACTED_VERSION\"}" > version.json
           echo "EXTRACTED_VERSION=$EXTRACTED_VERSION" >> $GITHUB_ENV
 
-      - name: 打包 install.js
-        run: |
-          zip install.zip install.js
-
       - name: 提交并推送到当前仓库
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 同时暂存 json 和 zip
-          git add version.json install.zip
+          # 现在只暂存 json，不再处理 zip
+          git add version.json
           
           if ! git diff --staged --quiet; then
-            git commit -m "已同步版本至 v$EXTRACTED_VERSION 并打包压缩"
+            git commit -m "已同步版本至 v$EXTRACTED_VERSION"
             
             # 拉取最新代码防止冲突，然后推送
             git pull --rebase origin main
             git push
-            echo "✅ 版本更新与打包均已完成并推送！"
+            echo "✅ 版本更新已完成并推送！"
           else
             echo "文件无实质变动，无需提交"
           fi
