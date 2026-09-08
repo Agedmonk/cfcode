@@ -90,7 +90,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="latest"
-          RELEASE_NAME="Latest Auto Build"
+          RELEASE_NAME="自动打包最新版本"
           
           if ! gh release view $TAG_NAME &>/dev/null; then
             echo "当前仓库 Release 不存在，正在新建..."
@@ -108,9 +108,9 @@ jobs:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
           TAG_NAME="latest"
-          RELEASE_NAME="Latest Auto Build"
+          RELEASE_NAME="自动打包最新版本"
           
-          # 自动获取当前用户，拼接得到目标仓库名，如: NicholasLai/public
+          # 自动获取当前用户，拼接得到目标仓库名，如: Agedmonk/public
           TARGET_REPO="${{ github.repository_owner }}/public"
           
           if ! gh release view $TAG_NAME --repo $TARGET_REPO &>/dev/null; then
