@@ -1,4 +1,4 @@
-name: 打包发布文件并推送到公共发布区
+name: 打包发布文件并推送到公开仓库
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 生成 ZIP 文件
+      - name: 生成 ZIP 文件并准备附件列表
         id: package
         run: |
           declare -A file_map=(
@@ -66,6 +66,14 @@ jobs:
               fi
             done
           fi
+
+          # ================== 新增逻辑 ==================
+          # 如果 version.json 存在，始终将其加入到上传列表中
+          if [ -f "version.json" ]; then
+            echo "发现 version.json，添加到发布列表。"
+            UPLOAD_LIST="$UPLOAD_LIST version.json"
+          fi
+          # ============================================
 
           UPLOAD_LIST=$(echo $UPLOAD_LIST | xargs)
 
@@ -110,7 +118,7 @@ jobs:
             gh release create $TAG_NAME $UPLOAD_LIST \
               --repo $TARGET_REPO \
               --title "$RELEASE_NAME" \
-              --notes "公开分发：自动化构建生成的最新 ZIP 压缩包。"
+              --notes "公开分发：自动化构建生成的最新 ZIP 压缩包与版本信息。"
           else
             echo "目标仓库 $TARGET_REPO Release 已存在，正在覆盖更新..."
             gh release upload $TAG_NAME $UPLOAD_LIST --repo $TARGET_REPO --clobber
