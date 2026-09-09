@@ -12,6 +12,7 @@ on:
       - 'getnodes.js'
       - 'getnodes_old.js'
       - 'mirror.js'
+      - 'version.json'
   workflow_dispatch:
 
 jobs:
