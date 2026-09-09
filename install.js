@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211513"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609091403"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -101,8 +101,8 @@ export default {
 };
 
 // ==================== 常量 ====================
-const DEFAULT_WORKER_CODE_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js";
-const DEFAULT_PAGES_ZIP_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip";
+const DEFAULT_WORKER_CODE_URL = "https://github.com/Agedmonk/public/releases/download/latest/_worker.js";
+const DEFAULT_PAGES_ZIP_URL = "https://github.com/Agedmonk/public/releases/download/latest/worker.zip";
 const ACCOUNTS_KEY = "accounts";
 
 // ==================== 工具函数 ====================
@@ -845,14 +845,14 @@ function getMainPage() {
       <div class="accordion">
         <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▶</span></div>
         <div id="workerPanel" class="accordion-content">
-          <div class="form-group"><label>代码源地址</label><input type="url" id="workerCodeUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js"></div>
+          <div class="form-group"><label>代码源地址</label><input type="url" id="workerCodeUrl" value="https://github.com/Agedmonk/public/releases/download/latest/_worker.js"></div>
           <button id="btnDeployWorker" class="btn-primary action-btn">开始部署 Worker</button>
         </div>
       </div>
       <div class="accordion">
         <div class="accordion-header" data-target="pagesPanel"><span>📄 Pages 部署</span><span class="arrow">▶</span></div>
         <div id="pagesPanel" class="accordion-content">
-          <div class="form-group"><label>ZIP 文件地址</label><input type="url" id="pagesZipUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip"></div>
+          <div class="form-group"><label>ZIP 文件地址</label><input type="url" id="pagesZipUrl" value="https://github.com/Agedmonk/public/releases/download/latest/worker.zip"></div>
           <button id="btnDeployPages" class="btn-primary action-btn">开始部署 Pages</button>
         </div>
       </div>
@@ -871,14 +871,14 @@ API Token: cfcut_...
 KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-worker-app
-代码源地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js</code></pre>
+代码源地址: https://github.com/Agedmonk/public/releases/download/latest/_worker.js</code></pre>
             <p><strong>Pages 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
 KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-pages-site
-ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
+ZIP 地址: https://github.com/Agedmonk/public/releases/download/latest/worker.zip</code></pre>
           </div>
           <div class="info-section">
             <h3>📡 POST 部署</h3>
@@ -960,7 +960,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       }).catch(err => console.error('账户列表加载失败', err));
 
       // 获取版本号并对比
-      fetch('https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/version.json')
+      fetch('https://github.com/Agedmonk/public/releases/download/latest/version.json')
         .then(res => res.json())
         .then(data => {
           const vBtn = document.getElementById('versionBtn');
@@ -1024,7 +1024,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           kvName: kvName,
           kvAction: 'keep', // KV 保留
           workerName: 'install',
-          codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
+          codeUrl: 'https://github.com/Agedmonk/public/releases/download/latest/install.js'
         };
 
         try {
