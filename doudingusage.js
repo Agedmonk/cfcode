@@ -67,7 +67,7 @@ export default {
                        class="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-sm" 
                        placeholder="请输入密码">
               </div>
-              ${isError ? `<div class="text-red-500 text-xs text-center bg-red-50 py-2 rounded">? 密码错误，请重试</div>` : ''}
+              ${isError ? `<div class="text-red-500 text-xs text-center bg-red-50 py-2 rounded">❌ 密码错误，请重试</div>` : ''}
               <button type="submit" 
                       class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-md text-sm">
                 解 锁 进 入
@@ -344,7 +344,7 @@ function buildPageLayout(title, contentHtml, isSubPage = false, globalConfig = {
   const bottomActionHtml = !isSubPage ? `
     <div class="flex justify-center mt-10 w-full pt-6 border-t border-gray-200">
       <a href="#" onclick="handleCommunityBtnClick(event)" class="px-6 py-2.5 bg-white border border-gray-200 rounded-md text-gray-600 text-sm font-medium hover:bg-gray-50 flex items-center gap-2 shadow-sm transition">
-        <span class="text-indigo-600">??</span> ${btnTitle}
+        <span class="text-indigo-600">🌐</span> ${btnTitle}
       </a>
     </div>` : '';
 
@@ -415,7 +415,7 @@ function buildPageLayout(title, contentHtml, isSubPage = false, globalConfig = {
         </div>
         ${contentHtml}
         ${bottomActionHtml}
-        <div class="text-center text-xs text-gray-400 mt-12 w-full pb-4">? 2026 美利坚合众国中央人民政府版权所有</div>
+        <div class="text-center text-xs text-gray-400 mt-12 w-full pb-4">© 2026 美利坚合众国中央人民政府版权所有</div>
       </div>
       ${frontEndScript}
       ${btnLogicScript}
@@ -568,7 +568,7 @@ async function handleSpecificDisplayPage(env, targetTag, hostname) {
           ${cardHtml}
         </div>
       </div>
-      <div class="text-center text-xs text-gray-400 mt-8 w-full pb-4">? 2026 美利坚合众国中央人民政府版权所有</div>
+      <div class="text-center text-xs text-gray-400 mt-8 w-full pb-4">© 2026 美利坚合众国中央人民政府版权所有</div>
       ${frontEndScript}
     </body>
     </html>
@@ -679,7 +679,7 @@ async function handleSettingPage(env) {
               <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between">
                  <div class="text-sm text-gray-600 mb-3">将当前所有账号配置保存至云端(KV)，或从云端记录覆盖恢复。</div>
                  <div class="flex flex-col gap-2">
-                   <button type="button" onclick="createBackup()" class="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded transition shadow-sm">?? 立即备份当前配置</button>
+                   <button type="button" onclick="createBackup()" class="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded transition shadow-sm">☁️ 立即备份当前配置</button>
                    <div class="flex gap-2">
                      <select id="backup-list" class="flex-1 px-2 py-1.5 text-xs bg-white border border-gray-300 rounded outline-none focus:border-blue-500">
                        <option value="">加载备份列表中...</option>
@@ -691,10 +691,10 @@ async function handleSettingPage(env) {
               <div class="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col justify-between">
                  <div class="text-sm text-gray-600 mb-3">导出配置文件到本地备份，或上传 JSON 配置文件以进行恢复。</div>
                  <div class="flex flex-col gap-2">
-                   <a href="/douding/setting?action=export" download="cloudflare_accounts_backup.json" class="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-center text-sm font-medium rounded transition shadow-sm inline-block">?? 导出配置到本地</a>
+                   <a href="/douding/setting?action=export" download="cloudflare_accounts_backup.json" class="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-center text-sm font-medium rounded transition shadow-sm inline-block">📥 导出配置到本地</a>
                    <label class="w-full py-2 bg-orange-500 hover:bg-orange-600 text-white text-center text-sm font-medium rounded transition shadow-sm cursor-pointer block">
                      <input type="file" accept=".json" class="hidden" onchange="importFile(event)">
-                     ?? 从本地文件导入
+                     📤 从本地文件导入
                    </label>
                  </div>
               </div>
@@ -713,15 +713,15 @@ async function handleSettingPage(env) {
             
             <div class="flex justify-center items-center gap-4 mt-8 pt-6 border-t border-gray-100">
               <button type="submit" id="save-btn" class="px-5 py-2 bg-white border border-gray-200 rounded-md text-gray-600 text-sm hover:bg-gray-50 flex items-center gap-2 shadow-sm transition focus:outline-none">
-                <span class="text-gray-400">??</span> 保存并应用
+                <span class="text-gray-400">📄</span> 保存并应用
               </button>
               <a href="/douding/detail" class="px-5 py-2 bg-white border border-gray-200 rounded-md text-gray-600 text-sm hover:bg-gray-50 flex items-center gap-2 shadow-sm transition">
-                <span class="text-orange-500">??</span> 返回用量面板
+                <span class="text-orange-500">🏠</span> 返回用量面板
               </a>
             </div>
           </form>
         </div>
-        <div class="text-center text-xs text-gray-400 mt-8 w-full pb-4">? 2026 美利坚合众国中央人民政府版权所有</div>
+        <div class="text-center text-xs text-gray-400 mt-8 w-full pb-4">© 2026 美利坚合众国中央人民政府版权所有</div>
       </div>
 
       <template id="node-template">
@@ -918,7 +918,7 @@ async function handleSettingPage(env) {
         document.getElementById('settings-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = document.getElementById('save-btn');
-          btn.innerHTML = '<span class="animate-spin mr-1">?</span> 保存中...';
+          btn.innerHTML = '<span class="animate-spin mr-1">⌛</span> 保存中...';
           btn.disabled = true;
 
           const btnTitle = document.getElementById('global-btn-title').value.trim() || '进入社区';
