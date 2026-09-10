@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609101600"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609101650"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -341,113 +341,6 @@ async function sha256Hex(uint8array) {
 }
 
 // ==================== Pages 部署核心 ====================
-async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = []) {
-  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-  
-  let kvId = null;
-  if (kvName) {
-    log(`处理 KV 绑定 [${kvName}]...`);
-    async function findKvNamespace() {
-      const res = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
-        { headers },
-        30000
-      );
-      const data = await res.json();
-      if (!data.success) throw new Error(`查询 KV 失败: ${JSON.stringify(data.errors)}`);
-      return data.result.find(i => i.title === kvName) || null;
-    }
-
-    let existing = await findKvNamespace();
-
-    if (existing) {
-      if (kvAction === 'keep') {
-        log(`找到已存在同名 KV，执行保留策略...`);
-        kvId = existing.id;
-      } else {
-        log(`找到已存在同名 KV，正在删除旧数据以清空...`);
-        const delRes = await fetchWithTimeout(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
-          { method: "DELETE", headers },
-          15000
-        );
-        const delData = await delRes.json();
-        if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
-        
-        const createRes = await fetchWithTimeout(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-          { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-          30000
-        );
-        const createData = await createRes.json();
-        if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-        kvId = createData.result.id;
-      }
-    } else {
-      const createRes = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-        { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-        30000
-      );
-      const createData = await createRes.json();
-      if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-      kvId = createData.result.id;
-    }
-  }
-
-  const projRes = await fetchWithTimeout(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    { headers },
-    30000
-  );
-  const projData = await projRes.json();
-  if (!projData.success) throw new Error(`获取 Pages 项目失败`);
-
-  const prodConfig = projData.result.deployment_configs?.production || {};
-  const prevConfig = projData.result.deployment_configs?.preview || {};
-  
-  let updatedKvNamespaces = prodConfig.kv_namespaces || {};
-  let updatedPrevKvNamespaces = prevConfig.kv_namespaces || {};
-  
-  if (kvId) {
-    updatedKvNamespaces = { ...updatedKvNamespaces, KV: { namespace_id: kvId } };
-    updatedPrevKvNamespaces = { ...updatedPrevKvNamespaces, KV: { namespace_id: kvId } };
-  }
-  
-  // 处理环境变量
-  let prodEnvVars = prodConfig.env_vars || {};
-  let prevEnvVars = prevConfig.env_vars || {};
-  
-  if (envs && envs.length > 0) {
-    log(`处理环境变量配置...`);
-    envs.forEach(env => {
-      if (!env.name) return;
-      if (!prodEnvVars[env.name] || env.action === 'replace') {
-        prodEnvVars[env.name] = { type: "plain_text", value: env.value };
-      }
-      if (!prevEnvVars[env.name] || env.action === 'replace') {
-        prevEnvVars[env.name] = { type: "plain_text", value: env.value };
-      }
-    });
-  }
-
-  const patchBody = {
-    deployment_configs: {
-      production: { kv_namespaces: updatedKvNamespaces, env_vars: prodEnvVars },
-      preview: { kv_namespaces: updatedPrevKvNamespaces, env_vars: prevEnvVars }
-    }
-  };
-
-  const patchRes = await fetchWithTimeout(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    { method: "PATCH", headers, body: JSON.stringify(patchBody) },
-    30000
-  );
-  const patchData = await patchRes.json();
-  if (!patchData.success) throw new Error(`更新项目配置失败`);
-  log(`[成功] 项目配置 (KV/ENV) 已更新`);
-}
-
 async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = []) {
   const logs = [];
   const log = (msg) => logs.push(msg);
@@ -466,12 +359,22 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     log(`[2/6] 解压...`);
     const files = await extractZip(zipBuf);
 
+    // ================== 核心修改区开始 ==================
     log(`[3/6] 检查项目...`);
+    let actualDomain = `${projectName}.pages.dev`; // 设置默认回退域名
     const check = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 30000);
+    
     if (check.status === 404) {
       const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`, { method: "POST", headers, body: JSON.stringify({ name: projectName, production_branch: "main" }) }, 30000)).json();
       if (!create.success) throw new Error(`创建失败`);
+      // 新建项目时，提取 Cloudflare 分配的真实 subdomain
+      if (create.result && create.result.subdomain) actualDomain = create.result.subdomain;
+    } else if (check.ok) {
+      const projInfo = await check.json();
+      // 获取已存在项目的真实 subdomain
+      if (projInfo.result && projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
     }
+    // ================== 核心修改区结束 ==================
 
     // 无论有没有 KV 只要有附加设置，就去更新配置
     if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
@@ -507,7 +410,8 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     if (!deployData.success) throw new Error(`部署失败`);
 
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
-	log(`[访问] Pages 域名: https://${projectName}.pages.dev`);
+    // 输出真实的系统分配域名
+    log(`[访问] 域名: https://${actualDomain}`); 
     return { success: true, logs, deploymentId: deployData.result.id, projectName, status: 200 };
     
   } catch (err) {
