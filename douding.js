@@ -4,12 +4,20 @@ export default {
     
     // ==========================================
     // 防盗用授权逻辑
-    const var1 = env.PATH_PASS_1 || "NicholasLai";
-    const var2 = env.PATH_PASS_2 || "226279dd-28b2-4b61-96be-a2a0b1afd522";
-    // 未授权跳转目标的变量。如果在后台没有设置 env.URL，则默认跳转到如下地址
+    // 1. 获取请求的路径（去掉开头的斜杠，方便比对，比如 "/NicholasLai" 变成 "NicholasLai"）
+    const requestPath = originalUrl.pathname.substring(1);
+
+    // 2. 将 ENV 密码和两个固定密码组合成一个允许通行的“白名单数组”
+    const validPasswords = [
+      env.PASSWORD, 
+      "NicholasLai", 
+      "226279dd-28b2-4b61-96be-a2a0b1afd522"
+    ];
+
     const fallbackUrl = env.URL || "https://www.evergrande.com";
 
-    if (originalUrl.pathname === `/${var1}` || originalUrl.pathname === `/${var2}`) {
+    // 3. 判断用户访问的路径，是否包含在我们的合法密码数组中
+    if (validPasswords.includes(requestPath)) {
       return new Response("认证成功，正在跳转...", {
         status: 302,
         headers: {
@@ -17,6 +25,7 @@ export default {
           "Set-Cookie": `pages_proxy_auth=passed; Path=/; HttpOnly; Max-Age=3600`
         }
       });
+    } });
     }
 
     const cookieHeader = request.headers.get("Cookie") || "";
