@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609101530"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609101600"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -507,6 +507,7 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     if (!deployData.success) throw new Error(`部署失败`);
 
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
+	log(`[访问] Pages 域名: https://${projectName}.pages.dev`);
     return { success: true, logs, deploymentId: deployData.result.id, projectName, status: 200 };
     
   } catch (err) {
