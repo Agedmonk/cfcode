@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609101511"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609101530"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -507,7 +507,6 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     if (!deployData.success) throw new Error(`部署失败`);
 
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
-	log(`[访问] Pages 域名: https://${projectName}.pages.dev`);
     return { success: true, logs, deploymentId: deployData.result.id, projectName, status: 200 };
     
   } catch (err) {
@@ -817,7 +816,7 @@ function getMainPage() {
   </style></head><body>
   <div class="container" style="max-width: 600px;">
     <div class="card">
-      <h2>?? Cloudflare 部署工具</h2>
+      <h2>☁️ Cloudflare 部署工具</h2>
       <div class="form-group"><label>Account ID</label><input type="text" id="accountId" placeholder="例如：8ab2...c8d0"></div>
       <div class="form-group"><label>API Token</label>
 		  <div class="pwd-wrap">
@@ -839,19 +838,19 @@ function getMainPage() {
         </label>
         <div id="envContainer" style="display:none; margin-top:10px;">
           <div id="envList"></div>
-          <button class="btn-primary" id="btnAddEnv" style="background:#e2e8f0; color:#475569; padding:6px 12px; font-size:12px; margin-top:8px;">? 添加变量</button>
+          <button class="btn-primary" id="btnAddEnv" style="background:#e2e8f0; color:#475569; padding:6px 12px; font-size:12px; margin-top:8px;">➕ 添加变量</button>
         </div>
       </div>
 
       <div class="accordion">
-        <div class="accordion-header" data-target="workerPanel"><span>?? Worker 部署</span><span class="arrow">?</span></div>
+        <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▼</span></div>
         <div id="workerPanel" class="accordion-content">
           <div class="form-group"><label>代码源地址</label><input type="url" id="workerCodeUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js"></div>
           <button id="btnDeployWorker" class="btn-primary action-btn">开始部署 Worker</button>
         </div>
       </div>
       <div class="accordion">
-        <div class="accordion-header" data-target="pagesPanel"><span>?? Pages 部署</span><span class="arrow">?</span></div>
+        <div class="accordion-header" data-target="pagesPanel"><span>📄 Pages 部署</span><span class="arrow">▼</span></div>
         <div id="pagesPanel" class="accordion-content">
           <div class="form-group"><label>ZIP 文件地址</label><input type="url" id="pagesZipUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip"></div>
           <button id="btnDeployPages" class="btn-primary action-btn">开始部署 Pages</button>
@@ -861,10 +860,10 @@ function getMainPage() {
       <div style="margin-top: 20px;"><label style="font-size:13px; font-weight:500;">部署日志</label><textarea id="logOutput" readonly placeholder="日志输出..."></textarea></div>
 
       <div class="accordion" style="margin-top: 15px;">
-        <div class="accordion-header" data-target="infoPanel"><span>?? 使用说明</span><span class="arrow">?</span></div>
+        <div class="accordion-header" data-target="infoPanel"><span>📖 使用说明</span><span class="arrow">▼</span></div>
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
-            <h3>?? 页面部署</h3>
+            <h3>🌐 页面部署</h3>
             <p>在表单中填写 Account ID、API Token、KV 名称（可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
@@ -882,7 +881,7 @@ KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清�
 ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
           </div>
           <div class="info-section">
-            <h3>?? POST 部署</h3>
+            <h3>⚡ POST 部署</h3>
             <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 AUTH_PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
             <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
@@ -922,7 +921,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
             <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
           <div class="info-section">
-            <h3>?? GET 部署</h3>
+            <h3>🔗 GET 部署</h3>
             <p>直接在浏览器地址栏或脚本中通过 URL 调用。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
             <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
@@ -933,19 +932,19 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       </div>
 
       <div class="nav-links" style="align-items: center;">
-		<a href="/dashboard">?? 常用部署</a>
+		<a href="/dashboard">📋 常用部署</a>
         <a href="javascript:void(0)" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 8px; padding: 8px 16px;">获取版本中...</a>
-        <a href="/logout" class="danger-link">?? 退出登录</a>
+        <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
     </div>
   </div>
 
   <div id="updateModal" class="modal">
     <div class="modal-content" style="max-width: 320px; text-align: center;">
-      <h3 style="margin-bottom:15px; font-size:16px;">? 发现系统新版本</h3>
+      <h3 style="margin-bottom:15px; font-size:16px;">🔔 发现系统新版本</h3>
       <p id="updateModalText" style="font-size: 13px; color: #475569; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.6;"></p>
       <div style="display:flex; gap:10px;">
-        <button id="btnConfirmUpdate" class="btn-primary" style="background:#10b981; flex:1;">?? 更新</button>
+        <button id="btnConfirmUpdate" class="btn-primary" style="background:#10b981; flex:1;">🔄 更新</button>
         <button id="btnCancelUpdate" class="btn-danger" style="background:#f1f5f9; color:#475569; flex:1;">忽略</button>
       </div>
     </div>
@@ -968,7 +967,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           if (vBtn && data.version) {
             const latestVersion = data.version;
             if (latestVersion !== '${CURRENT_VERSION}') {
-              vBtn.textContent = '?? 发现新版 v' + latestVersion;
+              vBtn.textContent = '✨ 发现新版 v' + latestVersion;
               vBtn.style.backgroundColor = '#10b981';
               vBtn.style.color = '#fff';
               
@@ -1034,7 +1033,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           });
           const data = await res.json();
           output.value += (data.logs || []).join('\\n') + '\\n';
-          if (data.success) output.value += '\\n? 系统自动更新成功！请稍候刷新页面即可生效。';
+          if (data.success) output.value += '\\n✅ 系统自动更新成功！请稍候刷新页面即可生效。';
         } catch (err) {
           output.value += '[错误] ' + err.message + '\\n';
         }
@@ -1059,7 +1058,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           <input type="text" class="env-name" placeholder="变量名(大写)" style="flex:2;">
           <input type="text" class="env-value" placeholder="变量值" style="flex:3;">
           <select class="env-action" style="flex:1; padding:10px 4px;"><option value="keep">保留原值</option><option value="replace">使用新值</option></select>
-          <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">?</button>
+          <button class="btn-icon r-env-btn" style="color:#ef4444" title="删除">✖</button>
         \`;
         div.querySelector('.r-env-btn').addEventListener('click', () => div.remove());
         document.getElementById('envList').appendChild(div);
@@ -1069,7 +1068,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const target = document.getElementById(this.dataset.target);
         const isActive = target.classList.contains('active');
         document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('active'));
-        document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '?');
+        document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '▼');
         if (!isActive) { target.classList.add('active'); this.querySelector('.arrow').textContent = '▼'; }
       }));
 
@@ -1148,14 +1147,14 @@ function getDashboardPage() {
   </style></head><body>
   <div class="container">
     <div class="card">
-      <h2>?? 常用部署清单</h2>
+      <h2>📋 常用部署清单</h2>
       <div id="accountList"></div>
       <button id="btnDeploySelected" class="btn-primary deploy-btn">一键部署所选项目</button>
       <div style="margin-top: 15px;"><textarea id="logOutput" readonly placeholder="日志将在此输出..."></textarea></div>
       <div class="nav-links">
-        <a href="/accounts">?? 账户设置</a>
-        <a href="/">?? 返回主页</a>
-        <a href="/logout" class="danger-link">?? 退出登录</a>
+        <a href="/accounts">⚙️ 账户设置</a>
+        <a href="/">🏠 返回主页</a>
+        <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
     </div>
   </div>
@@ -1189,11 +1188,11 @@ function getDashboardPage() {
           '<div class="project-list">' +
             '<div class="project-columns">' +
               '<div class="project-column">' +
-                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="worker"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="worker"> ?? Workers</div>' +
+                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="worker"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="worker"> 🚀 Workers</div>' +
                 '<div class="column-content">' + renderProjects(activeWorkers, 'worker', accIndex) + '</div>' +
               '</div>' +
               '<div class="project-column">' +
-                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="page"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="page"> ?? Pages</div>' +
+                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="page"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="page"> 📄 Pages</div>' +
                 '<div class="column-content">' + renderProjects(activePages, 'page', accIndex) + '</div>' +
               '</div>' +
             '</div>' +
@@ -1207,7 +1206,7 @@ function getDashboardPage() {
               '<div class="temp-env-wrap" style="grid-column: 1 / -1; margin-top: 5px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">' +
                 '<label class="temp-cb-wrap" style="margin-bottom:6px; cursor:pointer;"><input type="checkbox" class="temp-env-cb" data-acc-index="' + accIndex + '"> 为本组选中项目附加 ENV</label>' +
                 '<div class="temp-env-list" data-acc-index="' + accIndex + '" style="display:none; flex-direction:column; gap:6px;"></div>' +
-                '<button class="add-env-btn" data-acc-index="' + accIndex + '" style="display:none; background:#e2e8f0; color:#475569; padding:4px 8px; font-size:12px; border-radius:4px; border:none; cursor:pointer; margin-top:6px;">? 增加变量</button>' +
+                '<button class="add-env-btn" data-acc-index="' + accIndex + '" style="display:none; background:#e2e8f0; color:#475569; padding:4px 8px; font-size:12px; border-radius:4px; border:none; cursor:pointer; margin-top:6px;">➕ 增加变量</button>' +
               '</div>' +
             '</div>' +
           '</div>';
@@ -1237,7 +1236,7 @@ function getDashboardPage() {
                           '<option value="keep" ' + (action==='keep'?'selected':'') + '>同名保留原值</option>' +
                           '<option value="replace" ' + (action==='replace'?'selected':'') + '>同名使用新值</option>' +
                         '</select>' +
-                        '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">?</span>';
+                        '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
         div.querySelector('.r-env').addEventListener('click', () => div.remove());
         listNode.appendChild(div);
       }
@@ -1372,7 +1371,7 @@ function getDashboardPage() {
 </body></html>`;
 }
 
-/// ==================== 账户管理页面 ====================
+// ==================== 账户管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -1406,22 +1405,22 @@ function getAccountsPage() {
   </style></head><body>
   <div class="container">
     <div class="card">
-      <h2>?? 账户与配置管理</h2>
+      <h2>⚙️ 账户与配置管理</h2>
       
       <div class="action-bar">
-        <button id="btnBackup" class="btn-primary" style="background:#10b981;">?? 备份配置</button>
-        <button id="btnShowRestore" class="btn-primary" style="background:#f59e0b;">? 恢复配置</button>
-        <button id="btnExport" class="btn-primary" style="background:#8b5cf6;">?? 导出全部</button>
-        <button id="btnImport" class="btn-primary" style="background:#3b82f6;">?? 导入配置</button>
+        <button id="btnBackup" class="btn-primary" style="background:#10b981;">📦 备份配置</button>
+        <button id="btnShowRestore" class="btn-primary" style="background:#f59e0b;">⏪ 恢复配置</button>
+        <button id="btnExport" class="btn-primary" style="background:#8b5cf6;">📤 导出全部</button>
+        <button id="btnImport" class="btn-primary" style="background:#3b82f6;">📥 导入配置</button>
         <input type="file" id="importFile" style="display:none" accept=".json">
       </div>
 
       <div id="accountList"></div>
-      <button id="btnAdd" class="btn-primary" style="width:100%; padding:12px; margin-top:10px;">? 添加新账户</button>
+      <button id="btnAdd" class="btn-primary" style="width:100%; padding:12px; margin-top:10px;">➕ 添加新账户</button>
       
       <!-- 新增：缺省地址前缀模块 -->
       <div class="card" style="margin-top: 25px; padding: 20px; background: #fff; border: 1px solid var(--border); box-shadow: none;">
-        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">?? 缺省地址前缀</h3>
+        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">🔗 缺省地址前缀</h3>
         <div style="display:flex; align-items:center; gap:10px;">
            <input type="text" id="sysDefaultPrefix" readonly placeholder="例如: https://raw.githubusercontent.com/用户名/库名/main/" style="background:#f1f5f9; flex:1;">
            <button id="btnEditPrefix" class="btn-icon" style="color:var(--primary); flex-shrink:0;">${ICONS.edit}</button>
@@ -1431,8 +1430,8 @@ function getAccountsPage() {
       </div>
 
       <div class="nav-links">
-        <a href="/dashboard">?? 常用部署</a>
-        <a href="/">?? 返回主页</a>
+        <a href="/dashboard">📋 常用部署</a>
+        <a href="/">🏠 返回主页</a>
       </div>
     </div>
   </div>
@@ -1452,13 +1451,13 @@ function getAccountsPage() {
       <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
         <label style="color:#334155; margin-bottom:5px;">默认环境变量 (ENV) <span style="font-size:11px;color:#94a3b8;font-weight:normal;">会在常用部署页面自动加载</span></label>
         <div id="accEnvList" style="display:flex; flex-direction:column; gap:6px;"></div>
-        <button id="btnAddAccEnv" class="add-btn" style="width:auto; margin-top:8px;">? 添加默认变量</button>
+        <button id="btnAddAccEnv" class="add-btn" style="width:auto; margin-top:8px;">➕ 添加默认变量</button>
       </div>
 
       <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="editAccountShow" checked> 在部署页显示此账户</label></div>
       
-      <div class="form-group"><label>?? Workers 项目</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">? 添加 Worker</button></div>
-      <div class="form-group"><label>?? Pages 项目</label><div id="pagesList" class="dynamic-list"></div><button id="btnAddPage" class="add-btn">? 添加 Pages</button></div>
+      <div class="form-group"><label>🚀 Workers 项目</label><div id="workerList" class="dynamic-list"></div><button id="btnAddWorker" class="add-btn">➕ 添加 Worker</button></div>
+      <div class="form-group"><label>📄 Pages 项目</label><div id="pagesList" class="dynamic-list"></div><button id="btnAddPage" class="add-btn">➕ 添加 Pages</button></div>
       
       <div style="display:flex; gap:10px; margin-top:20px;">
         <button id="btnSave" class="btn-primary" style="flex:1; padding:10px;">保存</button>
@@ -1469,7 +1468,7 @@ function getAccountsPage() {
 
   <div id="restoreModal" class="modal">
     <div class="modal-content" style="max-width: 400px;">
-      <h3 style="margin-bottom:15px; font-size:16px;">? 选择备份进行恢复</h3>
+      <h3 style="margin-bottom:15px; font-size:16px;">📂 选择备份进行恢复</h3>
       <div class="form-group">
         <select id="backupSelect"></select>
         <small style="color:#e74c3c; display:block; margin-top:8px;">警告：恢复将覆盖当前所有配置！</small>
@@ -1543,8 +1542,8 @@ function getAccountsPage() {
           }); return h;
         };
         
-        pListHTML += renderProj(acc.workers, '?? Workers', 'workers');
-        pListHTML += renderProj(acc.pages, '?? Pages', 'pages');
+        pListHTML += renderProj(acc.workers, '🚀 Workers', 'workers');
+        pListHTML += renderProj(acc.pages, '📄 Pages', 'pages');
         if(!pListHTML) pListHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center;">暂无项目</div>';
         
         htmlStr += pListHTML + '</div>';
@@ -1597,7 +1596,7 @@ function getAccountsPage() {
     document.getElementById('btnBackup').addEventListener('click', async () => {
       if(!confirm('备份当前所有配置到 KV？')) return;
       const data = await (await fetch('/api/accounts/backup', { method: 'POST' })).json();
-      alert(data.success ? '? 成功！文件名: ' + data.key : '? 失败');
+      alert(data.success ? '✅ 成功！文件名: ' + data.key : '❌ 失败');
     });
     document.getElementById('btnExport').addEventListener('click', () => window.location.href = '/api/accounts/export');
     document.getElementById('btnShowRestore').addEventListener('click', async () => {
@@ -1610,7 +1609,7 @@ function getAccountsPage() {
     document.getElementById('btnConfirmRestore').addEventListener('click', async () => {
       const key = document.getElementById('backupSelect').value; if(!key || !confirm('将覆盖所有配置！确认？')) return;
       const data = await (await fetch('/api/accounts/restore', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ key }) })).json();
-      if(data.success) { alert('? 恢复成功'); document.getElementById('restoreModal').classList.remove('active'); loadAccounts(); }
+      if(data.success) { alert('✅ 恢复成功'); document.getElementById('restoreModal').classList.remove('active'); loadAccounts(); }
     });
     document.getElementById('btnCancelRestore').addEventListener('click', () => document.getElementById('restoreModal').classList.remove('active'));
     document.getElementById('btnImport').addEventListener('click', () => document.getElementById('importFile').click());
@@ -1622,8 +1621,8 @@ function getAccountsPage() {
           const json = JSON.parse(e.target.result);
           if(!confirm('将导入并覆盖配置！确认？')) return;
           const data = await (await fetch('/api/accounts/import', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(json) })).json();
-          if(data.success) { alert('? 导入成功'); loadAccounts(); } else alert('? 失败');
-        } catch(err) { alert('? JSON 解析失败'); }
+          if(data.success) { alert('✅ 导入成功'); loadAccounts(); } else alert('❌ 失败');
+        } catch(err) { alert('⚠️ JSON 解析失败'); }
         document.getElementById('importFile').value = '';
       }; reader.readAsText(file);
     });
@@ -1640,7 +1639,7 @@ function getAccountsPage() {
           <option value="keep" \${action==='keep'?'selected':''}>保留</option>
           <option value="replace" \${action==='replace'?'selected':''}>替换</option>
         </select>
-        <span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">?</span>
+        <span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>
       \`;
       div.querySelector('.r-env').addEventListener('click', () => div.remove());
       document.getElementById('accEnvList').appendChild(div);
