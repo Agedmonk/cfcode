@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609151550"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609151600"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
