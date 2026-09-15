@@ -34,15 +34,23 @@ export default {
         });
       }
 
-      // 2. 获取“我的预约”列表 (通过客户端提交的 ID 列表进行查询)
+      // 2. 获取“我的预约”列表 (修改为：通过受邀人姓名查询)
       if (method === 'POST' && path === '/api/my-reservations') {
-        const { ids } = await request.json();
+        const { invitee } = await request.json();
         const results = [];
-        for (let id of ids) {
-          const val = await env.KV.get(`res:${id}`, 'json');
-          if (val) results.push(val);
+        
+        if (invitee && invitee.trim() !== '') {
+          // 列出所有预约，并筛选出匹配该受邀人姓名的记录
+          const list = await env.KV.list({ prefix: 'res:' });
+          for (let key of list.keys) {
+            const val = await env.KV.get(key.name, 'json');
+            if (val && val.invitee === invitee.trim()) {
+              results.push(val);
+            }
+          }
+          results.sort((a, b) => b.createdAt - a.createdAt);
         }
-        results.sort((a, b) => b.createdAt - a.createdAt);
+        
         return new Response(JSON.stringify(results), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -150,7 +158,6 @@ export default {
     <div class="tabs">
         <div class="tab active" onclick="switchTab('new')">新建预约</div>
         <div class="tab" onclick="switchTab('my')">我的预约</div>
-        <!-- 核心修复区：修复了 onclick 中转义单引号的问题 -->
         ${isAdmin ? '<div class="tab" onclick="switchTab(\'admin\')">管理预约</div>' : ''}
     </div>
 
@@ -189,6 +196,15 @@ export default {
 
     <!-- 我的预约 -->
     <div id="tab-my" class="tab-content">
+        <!-- 搜索框 -->
+        <div class="card" style="background: #ffffff;">
+            <div class="form-group" style="margin-bottom: 10px;">
+                <label>查询预约记录</label>
+                <input type="text" id="searchName" placeholder="请输入受邀人姓名进行查询">
+            </div>
+            <button onclick="searchMyReservations()">查询</button>
+        </div>
+        
         <div id="myList"></div>
         <button class="btn-secondary" onclick="switchTab('new')">返回主页</button>
     </div>
@@ -198,7 +214,6 @@ export default {
     <div id="tab-admin" class="tab-content">
         <div id="adminList"></div>
         <div class="actions" style="margin-top:20px;">
-            <!--<button onclick="location.reload()">确定 (刷新本页)</button>-->
             <button class="btn-secondary" onclick="switchTab('new')">返回主页</button>
         </div>
     </div>
@@ -211,26 +226,25 @@ export default {
     // 垃圾桶图标 SVG
     const trashIcon = \`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>\`;
 
-    // ==================== 新增：自动设置日期为当天 ====================
+    // 自动设置日期为当天
     (function setTodayDate() {
         const today = new Date();
-        // 计算本地时区偏移，确保显示的是本地时间而不是 UTC 时间
         const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
         document.getElementById('date').value = localDate;
     })();
-    // =================================================================
     
     // 切换选项卡
     function switchTab(tabId) {
         document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
         
-        // 匹配对应的 tab 按钮并高亮
         const tabs = document.querySelectorAll('.tab');
         if (tabId === 'new') tabs[0].classList.add('active');
         if (tabId === 'my') {
             tabs[1].classList.add('active');
-            loadMyReservations();
+            // 清空之前的搜索结果和输入框
+            document.getElementById('myList').innerHTML = '';
+            document.getElementById('searchName').value = '';
         }
         if (tabId === 'admin' && IS_ADMIN) {
             tabs[2].classList.add('active');
@@ -243,10 +257,11 @@ export default {
     // 提交预约表单
     async function submitForm(e) {
         e.preventDefault();
+        const inviteeName = document.getElementById('invitee').value;
         const data = {
             date: document.getElementById('date').value,
             timeSlot: document.getElementById('timeSlot').value,
-            invitee: document.getElementById('invitee').value,
+            invitee: inviteeName,
             inviter: document.getElementById('inviter').value,
             code: document.getElementById('code').value
         };
@@ -259,13 +274,13 @@ export default {
         
         const result = await res.json();
         if (result.success) {
-            // 将生成的预约 ID 存入浏览器的 LocalStorage，用于关联“我的预约”
-            let myIds = JSON.parse(localStorage.getItem('zuiyuelou_ids') || '[]');
-            myIds.push(result.id);
-            localStorage.setItem('zuiyuelou_ids', JSON.stringify(myIds));
-            
             e.target.reset(); // 清空表单
-            switchTab('my');  // 前往我的预约
+            alert('预约提交成功！您可以在“我的预约”中使用受邀人姓名进行查询。');
+            switchTab('my');
+            
+            // 自动把刚刚填写的受邀人填入搜索框并触发查询
+            document.getElementById('searchName').value = inviteeName;
+            searchMyReservations();
         }
     }
 
@@ -277,26 +292,27 @@ export default {
         return \`<span class="badge \${colorClass}">\${status}</span>\`;
     }
 
-    // 加载我的预约
-    async function loadMyReservations() {
+    // 查询我的预约
+    async function searchMyReservations() {
+        const searchName = document.getElementById('searchName').value.trim();
         const container = document.getElementById('myList');
-        container.innerHTML = '<div class="empty-state">加载中...</div>';
         
-        const myIds = JSON.parse(localStorage.getItem('zuiyuelou_ids') || '[]');
-        if (myIds.length === 0) {
-            container.innerHTML = '<div class="empty-state">暂无预约记录</div>';
+        if (!searchName) {
+            container.innerHTML = '<div class="empty-state">请输入受邀人姓名</div>';
             return;
         }
 
+        container.innerHTML = '<div class="empty-state">查询中...</div>';
+
         const res = await fetch('/api/my-reservations', {
             method: 'POST',
-            body: JSON.stringify({ ids: myIds }),
+            body: JSON.stringify({ invitee: searchName }),
             headers: { 'Content-Type': 'application/json' }
         });
         const data = await res.json();
         
         if (data.length === 0) {
-            container.innerHTML = '<div class="empty-state">暂无预约记录</div>';
+            container.innerHTML = '<div class="empty-state">未查询到相关预约记录</div>';
             return;
         }
 
@@ -324,12 +340,8 @@ export default {
         
         await fetch('/api/reservation/' + id, { method: 'DELETE' });
         
-        // 从本地存储中移除
-        let myIds = JSON.parse(localStorage.getItem('zuiyuelou_ids') || '[]');
-        myIds = myIds.filter(myId => myId !== id);
-        localStorage.setItem('zuiyuelou_ids', JSON.stringify(myIds));
-        
-        loadMyReservations(); // 刷新列表
+        // 刷新查询结果
+        searchMyReservations();
     }
 
     // 加载管理预约 (仅管理员)
