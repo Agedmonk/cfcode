@@ -150,7 +150,8 @@ export default {
     <div class="tabs">
         <div class="tab active" onclick="switchTab('new')">新建预约</div>
         <div class="tab" onclick="switchTab('my')">我的预约</div>
-        ${isAdmin ? '<div class="tab" onclick="switchTab('admin')">管理预约</div>' : ''}
+        <!-- 核心修复区：修复了 onclick 中转义单引号的问题 -->
+        ${isAdmin ? '<div class="tab" onclick="switchTab(\'admin\')">管理预约</div>' : ''}
     </div>
 
     <!-- 填单区 -->
@@ -193,7 +194,7 @@ export default {
     </div>
 
     <!-- 管理预约 -->
-    ${isAdmin ? \`
+    ${isAdmin ? `
     <div id="tab-admin" class="tab-content">
         <div id="adminList"></div>
         <div class="actions" style="margin-top:20px;">
@@ -201,7 +202,7 @@ export default {
             <button class="btn-secondary" onclick="switchTab('new')">返回主页</button>
         </div>
     </div>
-    \` : ''}
+    ` : ''}
 </div>
 
 <script>
