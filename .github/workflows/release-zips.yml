@@ -44,11 +44,27 @@ jobs:
 
           UPLOAD_LIST=""
 
+          # 定义一个专用的打包函数：重命名文件为 _worker.js 后放入压缩包
+          pack_zip() {
+            local src_file=$1
+            local zip_name=$2
+            
+            # 1. 创建一个临时构建目录
+            mkdir -p temp_build_dir
+            # 2. 将原文件复制到临时目录，并重命名为 _worker.js
+            cp "$src_file" "temp_build_dir/_worker.js"
+            # 3. 切换到临时目录执行 zip，确保 zip 内部的相对路径和文件名仅为 _worker.js
+            (cd temp_build_dir && zip "../$zip_name" "_worker.js")
+            # 4. 清理临时目录
+            rm -rf temp_build_dir
+          }
+
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "触发方式: 手动执行 - 打包全部 ZIP"
             for js_file in "${!file_map[@]}"; do
               if [ -f "$js_file" ]; then
-                zip "${file_map[$js_file]}" "$js_file"
+                # 调用自定义的打包函数
+                pack_zip "$js_file" "${file_map[$js_file]}"
                 UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
               fi
             done
@@ -63,7 +79,8 @@ jobs:
             for js_file in "${!file_map[@]}"; do
               if echo "$changed_files" | grep -q "^$js_file$"; then
                 if [ -f "$js_file" ]; then
-                  zip "${file_map[$js_file]}" "$js_file"
+                  # 调用自定义的打包函数
+                  pack_zip "$js_file" "${file_map[$js_file]}"
                   UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
                 fi
               fi
@@ -71,7 +88,7 @@ jobs:
           fi
 
           # ================== 新增逻辑 ==================
-          # 如果 install.js / _worker.js / version.json 存在，始终将其加入到上传列表中
+          # 依然保留对源文件本身的直接上传（非 zip 形式）
           if [ -f "install.js" ]; then
             echo "发现 install.js，添加到发布列表。"
             UPLOAD_LIST="$UPLOAD_LIST install.js"
