@@ -198,7 +198,7 @@ export default {
     <div id="tab-admin" class="tab-content">
         <div id="adminList"></div>
         <div class="actions" style="margin-top:20px;">
-            <button onclick="location.reload()">确定 (刷新本页)</button>
+            <!--<button onclick="location.reload()">确定 (刷新本页)</button>-->
             <button class="btn-secondary" onclick="switchTab('new')">返回主页</button>
         </div>
     </div>
