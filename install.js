@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609101650"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609151550"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -338,6 +338,86 @@ async function extractZip(buf) {
 async function sha256Hex(uint8array) {
   const digest = await crypto.subtle.digest("SHA-256", uint8array);
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ==================== 补充缺失的 Pages 配置更新函数 ====================
+async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = []) {
+  const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  try {
+    log(`  - 拉取当前 Pages 项目配置...`);
+    const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
+    if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
+    const projData = await projRes.json();
+    
+    // 安全解析原有的生产环境配置
+    let productionConfig = projData.result?.deployment_configs?.production || {};
+    let kvNamespaces = productionConfig.kv_namespaces || {};
+    let envVars = productionConfig.env_vars || {};
+
+    // 1. 处理 KV 绑定
+    if (kvName) {
+      const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
+      const existing = kvList.result?.find(i => i.title === kvName);
+      let kvId;
+      
+      if (existing) {
+        if (kvAction === 'clear') {
+          log(`  - 找到同名 KV，执行清空策略 (先删后建)...`);
+          await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000);
+          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+          kvId = create.result.id;
+        } else {
+          log(`  - 找到同名 KV，执行保留策略...`);
+          kvId = existing.id;
+        }
+      } else {
+        log(`  - 未找到同名 KV，正在新建...`);
+        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+        if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+        kvId = create.result.id;
+      }
+      // Pages 的 KV 绑定格式
+      kvNamespaces["KV"] = { namespace_id: kvId }; 
+      log(`  - KV 绑定就绪 (ID: ${kvId})`);
+    }
+
+    // 2. 处理 ENV 环境变量
+    if (envs && envs.length > 0) {
+      envs.forEach(env => {
+        if (!env.name) return;
+        if (envVars[env.name] && env.action === 'keep') {
+          log(`  - [跳过] 保留原有变量: ${env.name}`);
+        } else {
+          envVars[env.name] = { type: "plain_text", value: env.value };
+          log(`  - [更新/新增] 环境变量: ${env.name}`);
+        }
+      });
+    }
+
+    // 3. 提交配置更新
+    const updatePayload = {
+      deployment_configs: {
+        production: {
+          ...productionConfig,
+          kv_namespaces: kvNamespaces,
+          env_vars: envVars
+        }
+      }
+    };
+
+    const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { 
+      method: "PATCH", headers, body: JSON.stringify(updatePayload) 
+    }, 15000);
+    
+    if (!updateRes.ok) {
+      const err = await updateRes.json();
+      throw new Error(`更新项目配置失败: ${JSON.stringify(err.errors)}`);
+    }
+    log(`  - 配置更新成功！`);
+  } catch (err) {
+    log(`  - [错误] 更新配置失败: ${err.message}`);
+    throw err; // 抛出错误以终止后续的部署流程
+  }
 }
 
 // ==================== Pages 部署核心 ====================
