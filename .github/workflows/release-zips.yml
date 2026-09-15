@@ -12,6 +12,7 @@ on:
       - 'getnodes.js'
       - 'getnodes_old.js'
       - 'mirror.js'
+      - 'order.js'
       - 'version.json'
   workflow_dispatch:
 
@@ -38,6 +39,7 @@ jobs:
             ["getnodes.js"]="getnodes.zip"
             ["getnodes_old.js"]="getnodes_old.zip"
             ["mirror.js"]="mirror.zip"
+            ["order.js"]="order.zip"
           )
 
           UPLOAD_LIST=""
