@@ -349,10 +349,15 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
     const projData = await projRes.json();
     
-    // 安全解析原有的生产环境配置
+    // 同时获取 production 和 preview 两个环境的配置
     let productionConfig = projData.result?.deployment_configs?.production || {};
-    let kvNamespaces = productionConfig.kv_namespaces || {};
-    let envVars = productionConfig.env_vars || {};
+    let previewConfig = projData.result?.deployment_configs?.preview || {};
+
+    let kvNamespacesProd = productionConfig.kv_namespaces || {};
+    let kvNamespacesPrev = previewConfig.kv_namespaces || {};
+    
+    let envVarsProd = productionConfig.env_vars || {};
+    let envVarsPrev = previewConfig.env_vars || {};
 
     // 1. 处理 KV 绑定
     if (kvName) {
@@ -376,8 +381,10 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
         if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
         kvId = create.result.id;
       }
-      // Pages 的 KV 绑定格式
-      kvNamespaces["KV"] = { namespace_id: kvId }; 
+      
+      // 同步给两个环境绑定 KV
+      kvNamespacesProd["KV"] = { namespace_id: kvId }; 
+      kvNamespacesPrev["KV"] = { namespace_id: kvId }; 
       log(`  - KV 绑定就绪 (ID: ${kvId})`);
     }
 
@@ -385,22 +392,29 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     if (envs && envs.length > 0) {
       envs.forEach(env => {
         if (!env.name) return;
-        if (envVars[env.name] && env.action === 'keep') {
+        if (envVarsProd[env.name] && env.action === 'keep') {
           log(`  - [跳过] 保留原有变量: ${env.name}`);
         } else {
-          envVars[env.name] = { type: "plain_text", value: env.value };
+          // 同步写入两个环境
+          envVarsProd[env.name] = { type: "plain_text", value: env.value };
+          envVarsPrev[env.name] = { type: "plain_text", value: env.value };
           log(`  - [更新/新增] 环境变量: ${env.name}`);
         }
       });
     }
 
-    // 3. 提交配置更新
+    // 3. 提交配置更新（包含两个环境，避免 fail_open 等校验报错）
     const updatePayload = {
       deployment_configs: {
         production: {
           ...productionConfig,
-          kv_namespaces: kvNamespaces,
-          env_vars: envVars
+          kv_namespaces: kvNamespacesProd,
+          env_vars: envVarsProd
+        },
+        preview: {
+          ...previewConfig,
+          kv_namespaces: kvNamespacesPrev,
+          env_vars: envVarsPrev
         }
       }
     };
@@ -416,7 +430,7 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     log(`  - 配置更新成功！`);
   } catch (err) {
     log(`  - [错误] 更新配置失败: ${err.message}`);
-    throw err; // 抛出错误以终止后续的部署流程
+    throw err;
   }
 }
 
