@@ -810,9 +810,9 @@ async function loadConfig(env) {
   if (env.YX) cfg.preferredIPs = parseIPList(env.YX);
   if (env.YXURL) cfg.optimizer.sourceURL = String(env.YXURL);
   // KV 图形化配置（更高优先级）
-  if (env.K && typeof env.K.get === 'function') {
+  if (env.KV && typeof env.KV.get === 'function') {
     try {
-      const kvJson = await env.K.get('config');
+      const kvJson = await env.KV.get('config');
       if (kvJson) {
         const kvCfg = JSON.parse(kvJson);
         Object.assign(cfg, kvCfg);
@@ -836,10 +836,10 @@ async function loadConfig(env) {
   return cfg;
 }
 async function saveConfig(env, cfg) {
-  if (!env.K || typeof env.K.put !== 'function') return false;
+  if (!env.KV || typeof env.KV.put !== 'function') return false;
   const clone = JSON.parse(JSON.stringify(cfg));
   if (clone.admin) clone.admin = String(clone.admin);
-  await env.K.put('config', JSON.stringify(clone));
+  await env.KV.put('config', JSON.stringify(clone));
   return true;
 }
 // ---------------------------------------------------------------------------
@@ -3452,21 +3452,21 @@ async function handleRequest(request, env) {
     try {
       // 读取上次下发的 IP（KV 键 issued），用于本次去重下发新 IP；轮询机制关闭时跳过（下发全部节点）
       let skip = null;
-      if (cfg.polling !== false && env.K && typeof env.K.get === 'function') {
+      if (cfg.polling !== false && env.KV && typeof env.KV.get === 'function') {
         try {
-          const iv = await env.K.get('issued');
+          const iv = await env.KV.get('issued');
           if (iv) { const j = JSON.parse(iv); if (Array.isArray(j.ips) && j.ips.length) skip = new Set(j.ips); }
         } catch (e) { /* 忽略 */ }
       }
       const sub = await generateSubscription(skip ? Object.assign({}, cfg, { _skipIssued: skip }) : cfg, request.url, fmt, UA, request.cf && request.cf.colo);
-      if (cfg.polling !== false && env.K && typeof env.K.put === 'function' && sub.issued && sub.issued.length) {
+      if (cfg.polling !== false && env.KV && typeof env.KV.put === 'function' && sub.issued && sub.issued.length) {
         // 滑动窗口历史队列：合并历史与本次已下发 IP，去重后保留最近 200 条（新 IP 优先保留），
         // 既实现客户端定期换新 IP，又避免集合无限增长或清空引起数量塌陷
         const prevIps = skip ? Array.from(skip) : [];
         const win = [...new Set([...sub.issued, ...prevIps])].slice(0, 200);
         const payload = JSON.stringify({ t: Date.now(), ips: win });
-        if (env._ctx && typeof env._ctx.waitUntil === 'function') env._ctx.waitUntil(env.K.put('issued', payload).catch(() => {}));
-        else await env.K.put('issued', payload).catch(() => {});
+        if (env._ctx && typeof env._ctx.waitUntil === 'function') env._ctx.waitUntil(env.KV.put('issued', payload).catch(() => {}));
+        else await env.KV.put('issued', payload).catch(() => {});
       }
       return new Response(sub.body, { status: 200, headers: { 'Content-Type': sub.type + '; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename*=utf-8\'\'CFNext' } });
     } catch (e) {
@@ -3506,9 +3506,9 @@ async function handleRequest(request, env) {
     if (apiName === 'reset') {
       if (request.method !== 'POST') return json({ ok: false, msg: '仅支持 POST' }, 405);
       try {
-        if (!env.K || typeof env.K.delete !== 'function') return json({ ok: false, msg: '未绑定 KV 命名空间，无需重置' }, 400);
-        await env.K.delete('config');
-        await env.K.delete('issued');
+        if (!env.KV || typeof env.KV.delete !== 'function') return json({ ok: false, msg: '未绑定 KV 命名空间，无需重置' }, 400);
+        await env.KV.delete('config');
+        await env.KV.delete('issued');
         return json({ ok: true, msg: '已重置：KV 已清空，面板还原为初始部署状态' });
       } catch (e) { return json({ ok: false, msg: '重置失败: ' + (e.message || e) }, 500); }
     }
