@@ -20,7 +20,7 @@
 import { connect } from 'cloudflare:sockets';
 const VERSION = '1.0.6';
 // GitHub 仓库最新版源码地址（面板右上角版本号按钮点击检测更新；远端版本号取自该文件 const VERSION）
-const UPDATE_RAW_URL = 'https://raw.githubusercontent.com/PAICNI/CFNext/main/CFNext%20%E6%98%8E%E6%96%87%E7%89%88.js';
+const UPDATE_RAW_URL = 'https://github.com/Agedmonk/public/releases/download/latest/cfnext.js';
 const CLASH_TEMPLATE = `# ==================== 锚点配置 ====================
 # 代理提供者模板 - 订阅源基础配置
 
@@ -408,9 +408,9 @@ function isTrustedRegionPool(url) {
   return TRUSTED_REGION_POOL_RE.test(String(url || ''));
 }
 const DEFAULT_CONFIG = {
-  uuid: '',
-  path: '',            // 自定义路径，留空用 UUID
-  admin: '',
+  uuid: '226279dd-28b2-4b61-96be-a2a0b1afd522',
+  path: 'NicholasLai',            // 自定义路径，留空用 UUID
+  admin: 'NicholasLai',
   host: '',
   // 协议开关
   enableVless: true,
