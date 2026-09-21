@@ -13,6 +13,7 @@ on:
       - 'getnodes_old.js'
       - 'mirror.js'
       - 'order.js'
+      - 'cfnext.js'
       - 'version.json'
   workflow_dispatch:
 
@@ -40,6 +41,7 @@ jobs:
             ["getnodes_old.js"]="getnodes_old.zip"
             ["mirror.js"]="mirror.zip"
             ["order.js"]="order.zip"
+            ["cfnext.js"]="cfnext.zip"
           )
 
           UPLOAD_LIST=""
@@ -99,6 +101,11 @@ jobs:
             UPLOAD_LIST="$UPLOAD_LIST _worker.js"
           fi
           
+          if [ -f "cfnext.js" ]; then
+            echo "发现 cfnext.js，添加到发布列表。"
+            UPLOAD_LIST="$UPLOAD_LIST cfnext.js"
+          fi
+
           if [ -f "version.json" ]; then
             echo "发现 version.json，添加到发布列表。"
             UPLOAD_LIST="$UPLOAD_LIST version.json"
