@@ -976,7 +976,7 @@ function json(obj, status) {
 // 不共享且会残留陈旧值）。KV 写入后内部缓存层会以新值重校验，保存后读取即新配置。
 // ---------------------------------------------------------------------------
 async function kvGetConfigCached(env) {
-  try { return await env.K.get('config', { cacheTtl: 30 }); } catch (e) { return null; }
+  try { return await env.KV.get('config', { cacheTtl: 30 }); } catch (e) { return null; }
 }
 function invalidateConfigCache() { /* 内存缓存已移除；KV 边缘缓存 30s 自然过期 */ }
 
@@ -1000,7 +1000,7 @@ async function loadConfig(env) {
   if (env.PROBE_ALIVE === '1' || env.PROBE_ALIVE === 'true') cfg.probeAlive = true;
   if (env.PROBE_ALIVE === '0' || env.PROBE_ALIVE === 'false') cfg.probeAlive = false;
   // KV 图形化配置（更高优先级）
-  if (env.K && typeof env.K.get === 'function') {
+  if (env.KV && typeof env.KV.get === 'function') {
     try {
       const kvJson = await kvGetConfigCached(env);
       if (kvJson) {
@@ -1035,10 +1035,10 @@ async function loadConfig(env) {
 }
 
 async function saveConfig(env, cfg) {
-  if (!env.K || typeof env.K.put !== 'function') return false;
+  if (!env.KV || typeof env.KV.put !== 'function') return false;
   const clone = JSON.parse(JSON.stringify(cfg));
   if (clone.admin) clone.admin = String(clone.admin);
-  await env.K.put('config', JSON.stringify(clone));
+  await env.KV.put('config', JSON.stringify(clone));
   invalidateConfigCache();   // 内存缓存已移除；KV put 后内部缓存层自动以新值重校验，保存后读取即为新配置
   return true;
 }
@@ -5305,9 +5305,9 @@ async function handleRequest(request, env) {
     try {
       // 读取上次下发的 IP（KV 键 issued），用于本次去重下发新 IP；轮询机制关闭时跳过（下发全部节点）
       let skip = null;
-      if (cfg.polling !== false && env.K && typeof env.K.get === 'function') {
+      if (cfg.polling !== false && env.KV && typeof env.KV.get === 'function') {
         try {
-          const iv = await env.K.get('issued');
+          const iv = await env.KV.get('issued');
           if (iv) { const j = JSON.parse(iv); if (Array.isArray(j.ips) && j.ips.length) skip = new Set(j.ips); }
         } catch (e) { /* 忽略 */ }
       }
@@ -5324,7 +5324,7 @@ async function handleRequest(request, env) {
         } catch (e) { /* 监控失败不阻断订阅 */ }
       }
       const sub = await generateSubscription(subCfg, request.url, fmt, UA, request.cf && request.cf.colo);
-      if (cfg.polling !== false && env.K && typeof env.K.put === 'function' && sub.issued && sub.issued.length) {
+      if (cfg.polling !== false && env.KV && typeof env.KV.put === 'function' && sub.issued && sub.issued.length) {
         // 滑动窗口历史队列：合并历史与本次已下发 IP，去重后保留最近 200 条（新 IP 优先保留），
         // 既实现客户端定期换新 IP，又避免集合无限增长或清空引起数量塌陷
         const prevIps = skip ? Array.from(skip) : [];
@@ -5334,8 +5334,8 @@ async function handleRequest(request, env) {
         const changed = win.length !== prevIps.length || win.some((ip, i) => ip !== prevIps[i]);
         if (changed) {
           const payload = JSON.stringify({ t: Date.now(), ips: win });
-          if (env._ctx && typeof env._ctx.waitUntil === 'function') env._ctx.waitUntil(env.K.put('issued', payload).catch(() => {}));
-          else await env.K.put('issued', payload).catch(() => {});
+          if (env._ctx && typeof env._ctx.waitUntil === 'function') env._ctx.waitUntil(env.KV.put('issued', payload).catch(() => {}));
+          else await env.KV.put('issued', payload).catch(() => {});
         }
       }
       return new Response(sub.body, { status: 200, headers: { 'Content-Type': sub.type + '; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="CFNext"; filename*=utf-8\'\'CFNext' } });
@@ -5370,9 +5370,9 @@ async function handleRequest(request, env) {
           // 首次保存联动：KV 从未显式设置过 quotaAuto 时，本次保存若已配置 Cloudflare 监控 → 自动调节默认开启
           // （否则表单默认 false 会写入 KV，导致刷新后联动失效；用户后续手动关闭并保存后以用户为准）
           let kvHadQuota = false;
-          if (env.K && typeof env.K.get === 'function') {
+          if (env.KV && typeof env.KV.get === 'function') {
             try {
-              const kvJson = await env.K.get('config', { cacheTtl: 30 });
+              const kvJson = await env.KV.get('config', { cacheTtl: 30 });
               if (kvJson) { const kvCfg = JSON.parse(kvJson); if (kvCfg.quotaAuto !== undefined) kvHadQuota = true; }
             } catch (e) { /* 读取失败按未设置处理 */ }
           }
@@ -5393,16 +5393,16 @@ async function handleRequest(request, env) {
     if (apiName === 'reset') {
       if (request.method !== 'POST') return json({ ok: false, msg: '仅支持 POST' }, 405);
       try {
-        if (!env.K || typeof env.K.delete !== 'function') return json({ ok: false, msg: '未绑定 KV 命名空间，无需重置' }, 400);
-        await env.K.delete('config');
-        await env.K.delete('issued');
+        if (!env.KV || typeof env.KV.delete !== 'function') return json({ ok: false, msg: '未绑定 KV 命名空间，无需重置' }, 400);
+        await env.KV.delete('config');
+        await env.KV.delete('issued');
         invalidateConfigCache();   // 清空配置缓存，reload 后 loadConfig 读到空 KV → 默认配置
         return json({ ok: true, msg: '已重置：KV 已清空，面板还原为初始部署状态' });
       } catch (e) { return json({ ok: false, msg: '重置失败: ' + (e.message || e) }, 500); }
     }
 
     if (apiName === 'status') {
-      return json({ ok: true, data: { version: VERSION, kind: deployKind() === 'obfuscated' ? '混淆版' : '明文版', host: url.hostname, path: panelPath, region: (request.cf && request.cf.colo) || 'unknown', kv: !!(env.K && typeof env.K.get === 'function'), workersDev: /\.workers\.dev$/i.test(url.hostname) } });
+      return json({ ok: true, data: { version: VERSION, kind: deployKind() === 'obfuscated' ? '混淆版' : '明文版', host: url.hostname, path: panelPath, region: (request.cf && request.cf.colo) || 'unknown', kv: !!(env.KV && typeof env.KV.get === 'function'), workersDev: /\.workers\.dev$/i.test(url.hostname) } });
     }
 
     if (apiName === 'update') {
