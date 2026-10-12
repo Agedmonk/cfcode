@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202608211513"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202609151600"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -340,114 +340,101 @@ async function sha256Hex(uint8array) {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-// ==================== Pages 部署核心 ====================
+// ==================== 补充缺失的 Pages 配置更新函数 ====================
 async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = []) {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-  
-  let kvId = null;
-  if (kvName) {
-    log(`处理 KV 绑定 [${kvName}]...`);
-    async function findKvNamespace() {
-      const res = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
-        { headers },
-        30000
-      );
-      const data = await res.json();
-      if (!data.success) throw new Error(`查询 KV 失败: ${JSON.stringify(data.errors)}`);
-      return data.result.find(i => i.title === kvName) || null;
-    }
+  try {
+    log(`  - 拉取当前 Pages 项目配置...`);
+    const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
+    if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
+    const projData = await projRes.json();
+    
+    // 同时获取 production 和 preview 两个环境的配置
+    let productionConfig = projData.result?.deployment_configs?.production || {};
+    let previewConfig = projData.result?.deployment_configs?.preview || {};
 
-    let existing = await findKvNamespace();
+    let kvNamespacesProd = productionConfig.kv_namespaces || {};
+    let kvNamespacesPrev = previewConfig.kv_namespaces || {};
+    
+    let envVarsProd = productionConfig.env_vars || {};
+    let envVarsPrev = previewConfig.env_vars || {};
 
-    if (existing) {
-      if (kvAction === 'keep') {
-        log(`找到已存在同名 KV，执行保留策略...`);
-        kvId = existing.id;
+    // 1. 处理 KV 绑定
+    if (kvName) {
+      const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
+      const existing = kvList.result?.find(i => i.title === kvName);
+      let kvId;
+      
+      if (existing) {
+        if (kvAction === 'clear') {
+          log(`  - 找到同名 KV，执行清空策略 (先删后建)...`);
+          await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000);
+          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+          kvId = create.result.id;
+        } else {
+          log(`  - 找到同名 KV，执行保留策略...`);
+          kvId = existing.id;
+        }
       } else {
-        log(`找到已存在同名 KV，正在删除旧数据以清空...`);
-        const delRes = await fetchWithTimeout(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`,
-          { method: "DELETE", headers },
-          15000
-        );
-        const delData = await delRes.json();
-        if (!delData.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(delData.errors)}`);
-        
-        const createRes = await fetchWithTimeout(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-          { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-          30000
-        );
-        const createData = await createRes.json();
-        if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-        kvId = createData.result.id;
+        log(`  - 未找到同名 KV，正在新建...`);
+        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+        if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+        kvId = create.result.id;
       }
-    } else {
-      const createRes = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`,
-        { method: "POST", headers, body: JSON.stringify({ title: kvName }) },
-        30000
-      );
-      const createData = await createRes.json();
-      if (!createData.success) throw new Error(`创建新 KV 失败: ${JSON.stringify(createData.errors)}`);
-      kvId = createData.result.id;
+      
+      // 同步给两个环境绑定 KV
+      kvNamespacesProd["KV"] = { namespace_id: kvId }; 
+      kvNamespacesPrev["KV"] = { namespace_id: kvId }; 
+      log(`  - KV 绑定就绪 (ID: ${kvId})`);
     }
-  }
 
-  const projRes = await fetchWithTimeout(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    { headers },
-    30000
-  );
-  const projData = await projRes.json();
-  if (!projData.success) throw new Error(`获取 Pages 项目失败`);
-
-  const prodConfig = projData.result.deployment_configs?.production || {};
-  const prevConfig = projData.result.deployment_configs?.preview || {};
-  
-  let updatedKvNamespaces = prodConfig.kv_namespaces || {};
-  let updatedPrevKvNamespaces = prevConfig.kv_namespaces || {};
-  
-  if (kvId) {
-    updatedKvNamespaces = { ...updatedKvNamespaces, KV: { namespace_id: kvId } };
-    updatedPrevKvNamespaces = { ...updatedPrevKvNamespaces, KV: { namespace_id: kvId } };
-  }
-  
-  // 处理环境变量
-  let prodEnvVars = prodConfig.env_vars || {};
-  let prevEnvVars = prevConfig.env_vars || {};
-  
-  if (envs && envs.length > 0) {
-    log(`处理环境变量配置...`);
-    envs.forEach(env => {
-      if (!env.name) return;
-      if (!prodEnvVars[env.name] || env.action === 'replace') {
-        prodEnvVars[env.name] = { type: "plain_text", value: env.value };
-      }
-      if (!prevEnvVars[env.name] || env.action === 'replace') {
-        prevEnvVars[env.name] = { type: "plain_text", value: env.value };
-      }
-    });
-  }
-
-  const patchBody = {
-    deployment_configs: {
-      production: { kv_namespaces: updatedKvNamespaces, env_vars: prodEnvVars },
-      preview: { kv_namespaces: updatedPrevKvNamespaces, env_vars: prevEnvVars }
+    // 2. 处理 ENV 环境变量
+    if (envs && envs.length > 0) {
+      envs.forEach(env => {
+        if (!env.name) return;
+        if (envVarsProd[env.name] && env.action === 'keep') {
+          log(`  - [跳过] 保留原有变量: ${env.name}`);
+        } else {
+          // 同步写入两个环境
+          envVarsProd[env.name] = { type: "plain_text", value: env.value };
+          envVarsPrev[env.name] = { type: "plain_text", value: env.value };
+          log(`  - [更新/新增] 环境变量: ${env.name}`);
+        }
+      });
     }
-  };
 
-  const patchRes = await fetchWithTimeout(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
-    { method: "PATCH", headers, body: JSON.stringify(patchBody) },
-    30000
-  );
-  const patchData = await patchRes.json();
-  if (!patchData.success) throw new Error(`更新项目配置失败`);
-  log(`[成功] 项目配置 (KV/ENV) 已更新`);
+    // 3. 提交配置更新（包含两个环境，避免 fail_open 等校验报错）
+    const updatePayload = {
+      deployment_configs: {
+        production: {
+          ...productionConfig,
+          kv_namespaces: kvNamespacesProd,
+          env_vars: envVarsProd
+        },
+        preview: {
+          ...previewConfig,
+          kv_namespaces: kvNamespacesPrev,
+          env_vars: envVarsPrev
+        }
+      }
+    };
+
+    const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { 
+      method: "PATCH", headers, body: JSON.stringify(updatePayload) 
+    }, 15000);
+    
+    if (!updateRes.ok) {
+      const err = await updateRes.json();
+      throw new Error(`更新项目配置失败: ${JSON.stringify(err.errors)}`);
+    }
+    log(`  - 配置更新成功！`);
+  } catch (err) {
+    log(`  - [错误] 更新配置失败: ${err.message}`);
+    throw err;
+  }
 }
 
+// ==================== Pages 部署核心 ====================
 async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = []) {
   const logs = [];
   const log = (msg) => logs.push(msg);
@@ -466,12 +453,22 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     log(`[2/6] 解压...`);
     const files = await extractZip(zipBuf);
 
+    // ================== 核心修改区开始 ==================
     log(`[3/6] 检查项目...`);
+    let actualDomain = `${projectName}.pages.dev`; // 设置默认回退域名
     const check = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 30000);
+    
     if (check.status === 404) {
       const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`, { method: "POST", headers, body: JSON.stringify({ name: projectName, production_branch: "main" }) }, 30000)).json();
       if (!create.success) throw new Error(`创建失败`);
+      // 新建项目时，提取 Cloudflare 分配的真实 subdomain
+      if (create.result && create.result.subdomain) actualDomain = create.result.subdomain;
+    } else if (check.ok) {
+      const projInfo = await check.json();
+      // 获取已存在项目的真实 subdomain
+      if (projInfo.result && projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
     }
+    // ================== 核心修改区结束 ==================
 
     // 无论有没有 KV 只要有附加设置，就去更新配置
     if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
@@ -507,6 +504,8 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     if (!deployData.success) throw new Error(`部署失败`);
 
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
+    // 输出真实的系统分配域名
+    log(`[访问] 域名: https://${actualDomain}`); 
     return { success: true, logs, deploymentId: deployData.result.id, projectName, status: 200 };
     
   } catch (err) {
@@ -816,7 +815,7 @@ function getMainPage() {
   </style></head><body>
   <div class="container" style="max-width: 600px;">
     <div class="card">
-      <h2>🚀 Cloudflare 部署工具</h2>
+      <h2>☁️ Cloudflare 部署工具</h2>
       <div class="form-group"><label>Account ID</label><input type="text" id="accountId" placeholder="例如：8ab2...c8d0"></div>
       <div class="form-group"><label>API Token</label>
 		  <div class="pwd-wrap">
@@ -843,14 +842,14 @@ function getMainPage() {
       </div>
 
       <div class="accordion">
-        <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▶</span></div>
+        <div class="accordion-header" data-target="workerPanel"><span>🚀 Worker 部署</span><span class="arrow">▼</span></div>
         <div id="workerPanel" class="accordion-content">
           <div class="form-group"><label>代码源地址</label><input type="url" id="workerCodeUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js"></div>
           <button id="btnDeployWorker" class="btn-primary action-btn">开始部署 Worker</button>
         </div>
       </div>
       <div class="accordion">
-        <div class="accordion-header" data-target="pagesPanel"><span>📄 Pages 部署</span><span class="arrow">▶</span></div>
+        <div class="accordion-header" data-target="pagesPanel"><span>📄 Pages 部署</span><span class="arrow">▼</span></div>
         <div id="pagesPanel" class="accordion-content">
           <div class="form-group"><label>ZIP 文件地址</label><input type="url" id="pagesZipUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip"></div>
           <button id="btnDeployPages" class="btn-primary action-btn">开始部署 Pages</button>
@@ -860,10 +859,10 @@ function getMainPage() {
       <div style="margin-top: 20px;"><label style="font-size:13px; font-weight:500;">部署日志</label><textarea id="logOutput" readonly placeholder="日志输出..."></textarea></div>
 
       <div class="accordion" style="margin-top: 15px;">
-        <div class="accordion-header" data-target="infoPanel"><span>📘 使用说明</span><span class="arrow">▶</span></div>
+        <div class="accordion-header" data-target="infoPanel"><span>📖 使用说明</span><span class="arrow">▼</span></div>
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
-            <h3>📄 页面部署</h3>
+            <h3>🌐 页面部署</h3>
             <p>在表单中填写 Account ID、API Token、KV 名称（可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
@@ -881,7 +880,7 @@ KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清�
 ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
           </div>
           <div class="info-section">
-            <h3>📡 POST 部署</h3>
+            <h3>⚡ POST 部署</h3>
             <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 AUTH_PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
             <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
@@ -941,10 +940,10 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
 
   <div id="updateModal" class="modal">
     <div class="modal-content" style="max-width: 320px; text-align: center;">
-      <h3 style="margin-bottom:15px; font-size:16px;">✨ 发现系统新版本</h3>
+      <h3 style="margin-bottom:15px; font-size:16px;">🔔 发现系统新版本</h3>
       <p id="updateModalText" style="font-size: 13px; color: #475569; margin-bottom: 20px; white-space: pre-wrap; line-height: 1.6;"></p>
       <div style="display:flex; gap:10px;">
-        <button id="btnConfirmUpdate" class="btn-primary" style="background:#10b981; flex:1;">🚀 更新</button>
+        <button id="btnConfirmUpdate" class="btn-primary" style="background:#10b981; flex:1;">🔄 更新</button>
         <button id="btnCancelUpdate" class="btn-danger" style="background:#f1f5f9; color:#475569; flex:1;">忽略</button>
       </div>
     </div>
@@ -967,7 +966,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           if (vBtn && data.version) {
             const latestVersion = data.version;
             if (latestVersion !== '${CURRENT_VERSION}') {
-              vBtn.textContent = '🎁 发现新版 v' + latestVersion;
+              vBtn.textContent = '✨ 发现新版 v' + latestVersion;
               vBtn.style.backgroundColor = '#10b981';
               vBtn.style.color = '#fff';
               
@@ -1068,7 +1067,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const target = document.getElementById(this.dataset.target);
         const isActive = target.classList.contains('active');
         document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('active'));
-        document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '▶');
+        document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '▼');
         if (!isActive) { target.classList.add('active'); this.querySelector('.arrow').textContent = '▼'; }
       }));
 
@@ -1152,7 +1151,7 @@ function getDashboardPage() {
       <button id="btnDeploySelected" class="btn-primary deploy-btn">一键部署所选项目</button>
       <div style="margin-top: 15px;"><textarea id="logOutput" readonly placeholder="日志将在此输出..."></textarea></div>
       <div class="nav-links">
-        <a href="/accounts">👤 账户设置</a>
+        <a href="/accounts">⚙️ 账户设置</a>
         <a href="/">🏠 返回主页</a>
         <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
@@ -1371,7 +1370,7 @@ function getDashboardPage() {
 </body></html>`;
 }
 
-/// ==================== 账户管理页面 ====================
+// ==================== 账户管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -1405,10 +1404,10 @@ function getAccountsPage() {
   </style></head><body>
   <div class="container">
     <div class="card">
-      <h2>👤 账户与配置管理</h2>
+      <h2>⚙️ 账户与配置管理</h2>
       
       <div class="action-bar">
-        <button id="btnBackup" class="btn-primary" style="background:#10b981;">💾 备份配置</button>
+        <button id="btnBackup" class="btn-primary" style="background:#10b981;">📦 备份配置</button>
         <button id="btnShowRestore" class="btn-primary" style="background:#f59e0b;">⏪ 恢复配置</button>
         <button id="btnExport" class="btn-primary" style="background:#8b5cf6;">📤 导出全部</button>
         <button id="btnImport" class="btn-primary" style="background:#3b82f6;">📥 导入配置</button>
@@ -1468,7 +1467,7 @@ function getAccountsPage() {
 
   <div id="restoreModal" class="modal">
     <div class="modal-content" style="max-width: 400px;">
-      <h3 style="margin-bottom:15px; font-size:16px;">⏪ 选择备份进行恢复</h3>
+      <h3 style="margin-bottom:15px; font-size:16px;">📂 选择备份进行恢复</h3>
       <div class="form-group">
         <select id="backupSelect"></select>
         <small style="color:#e74c3c; display:block; margin-top:8px;">警告：恢复将覆盖当前所有配置！</small>
@@ -1622,7 +1621,7 @@ function getAccountsPage() {
           if(!confirm('将导入并覆盖配置！确认？')) return;
           const data = await (await fetch('/api/accounts/import', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(json) })).json();
           if(data.success) { alert('✅ 导入成功'); loadAccounts(); } else alert('❌ 失败');
-        } catch(err) { alert('❌ JSON 解析失败'); }
+        } catch(err) { alert('⚠️ JSON 解析失败'); }
         document.getElementById('importFile').value = '';
       }; reader.readAsText(file);
     });
