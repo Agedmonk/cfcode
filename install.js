@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202609151600"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202610131702"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -104,6 +104,7 @@ export default {
 const DEFAULT_WORKER_CODE_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js";
 const DEFAULT_PAGES_ZIP_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip";
 const ACCOUNTS_KEY = "accounts";
+const DEFAULT_KV_BINDING = "KV"; // 默认 KV 绑定变量名
 
 // ==================== 工具函数 ====================
 async function fetchWithTimeout(url, options = {}, timeout = 15000) {
@@ -114,6 +115,12 @@ async function fetchWithTimeout(url, options = {}, timeout = 15000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// 规范化 KV 绑定变量名（留空则回退为默认 "KV"）
+function normalizeKvBinding(name) {
+  const v = (name === undefined || name === null) ? "" : String(name).trim();
+  return v ? v : DEFAULT_KV_BINDING;
 }
 
 // ==================== KV 账户管理 ====================
@@ -132,9 +139,10 @@ async function findAccountIndex(env, identifier) {
 }
 
 // ==================== Worker 部署核心 ====================
-async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = []) {
+async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = [], kvBindingName = DEFAULT_KV_BINDING) {
   const logs = [];
   const log = (msg) => logs.push(msg);
+  const kvBind = normalizeKvBinding(kvBindingName);
   try {
     if (!codeUrl || codeUrl.trim() === "" || codeUrl.trim() === "default") codeUrl = DEFAULT_WORKER_CODE_URL;
     if (!accountId || !apiToken || !workerName) {
@@ -153,7 +161,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
 
     log(`[2/4] 检查并处理原有配置(KV/ENV)...`);
     if (kvName && kvName.trim()) {
-      log(`[提示] 正在指定新 KV [${kvName}]...`);
+      log(`[提示] 正在指定新 KV [${kvName}]，绑定变量名 [${kvBind}]...`);
       const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
       if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
       const existing = kvList.result.find(i => i.title === kvName);
@@ -177,8 +185,8 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
         if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
         kvId = create.result.id;
       }
-      bindings = [{ type: "kv_namespace", name: "KV", namespace_id: kvId }];
-      log(`[成功] KV 绑定配置完成 (ID: ${kvId})`);
+      bindings = [{ type: "kv_namespace", name: kvBind, namespace_id: kvId }];
+      log(`[成功] KV 绑定配置完成 (变量名: ${kvBind}, ID: ${kvId})`);
     } else {
       log(`[提示] 未指定新 KV，尝试拉取原有绑定...`);
       try {
@@ -341,8 +349,9 @@ async function sha256Hex(uint8array) {
 }
 
 // ==================== 补充缺失的 Pages 配置更新函数 ====================
-async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = []) {
+async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = [], kvBindingName = DEFAULT_KV_BINDING) {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  const kvBind = normalizeKvBinding(kvBindingName);
   try {
     log(`  - 拉取当前 Pages 项目配置...`);
     const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
@@ -382,10 +391,10 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
         kvId = create.result.id;
       }
       
-      // 同步给两个环境绑定 KV
-      kvNamespacesProd["KV"] = { namespace_id: kvId }; 
-      kvNamespacesPrev["KV"] = { namespace_id: kvId }; 
-      log(`  - KV 绑定就绪 (ID: ${kvId})`);
+      // 同步给两个环境绑定 KV（使用自定义变量名）
+      kvNamespacesProd[kvBind] = { namespace_id: kvId }; 
+      kvNamespacesPrev[kvBind] = { namespace_id: kvId }; 
+      log(`  - KV 绑定就绪 (变量名: ${kvBind}, ID: ${kvId})`);
     }
 
     // 2. 处理 ENV 环境变量
@@ -435,9 +444,10 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
 }
 
 // ==================== Pages 部署核心 ====================
-async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = []) {
+async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = [], kvBindingName = DEFAULT_KV_BINDING) {
   const logs = [];
   const log = (msg) => logs.push(msg);
+  const kvBind = normalizeKvBinding(kvBindingName);
   try {
     if (!zipUrl || zipUrl.trim() === "" || zipUrl.trim() === "default") zipUrl = DEFAULT_PAGES_ZIP_URL;
     if (!accountId || !apiToken || !projectName) {
@@ -473,7 +483,7 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     // 无论有没有 KV 只要有附加设置，就去更新配置
     if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
       log(`[4/6] 更新项目配置(KV/ENV)...`);
-      await updatePagesConfig(accountId, apiToken, projectName, kvName ? kvName.trim() : "", logs, log, kvAction, envs);
+      await updatePagesConfig(accountId, apiToken, projectName, kvName ? kvName.trim() : "", logs, log, kvAction, envs, kvBind);
     } else {
       log(`[4/6] 无KV及ENV配置，跳过更新设置...`);
     }
@@ -529,12 +539,13 @@ function processSourceUrl(url, prefix) {
 }
 
 // ==================== 统一部署分发 ====================
-async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = []) {
+async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = DEFAULT_KV_BINDING) {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
+  const kvBind = normalizeKvBinding(kvBinding);
   if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400 };
-  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs);
-  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs);
+  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs, kvBind);
+  if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs, kvBind);
   return { success: false, error: "type 无效", logs: ["ERR"], status: 400 };
 }
 
@@ -543,14 +554,14 @@ async function handleUnifiedDeploy(request, env) {
   let p = {};
   if (ct.includes("application/json")) {
     const b = await request.json().catch(() => ({}));
-    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url, envs: b.envs || [] };
+    p = { type: b.type, id: b.id || b.accountid, token: b.token, kv: b.kv || b.kvname, kvAction: b.kvAction || b.kvaction || 'keep', kvBinding: b.kvBinding || b.kvbinding || b.kvBind || b.kvbind || DEFAULT_KV_BINDING, name: b.name || b.projectname, source: b.source || b.codeurl || b.zipurl || b.url, envs: b.envs || [] };
   } else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), envs: [] }; 
+    p = { type: fd.get("type"), id: fd.get("id") || fd.get("accountid"), token: fd.get("token"), kv: fd.get("kv") || fd.get("kvname"), kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', kvBinding: fd.get("kvBinding") || fd.get("kvbinding") || fd.get("kvBind") || DEFAULT_KV_BINDING, name: fd.get("name") || fd.get("projectname"), source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), envs: [] }; 
   }
   const prefix = await getSystemPrefix(env);
   p.source = processSourceUrl(p.source, prefix);
-  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs);
+  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs, p.kvBinding);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
@@ -558,7 +569,8 @@ async function handleGetDeploy(url, env) {
   const q = url.searchParams;
   const prefix = await getSystemPrefix(env);
   const source = processSourceUrl(q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", prefix);
-  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), source, q.get("kvAction") || 'keep', []);
+  const kvBinding = q.get("kvBinding") || q.get("kvbinding") || q.get("kvBind") || DEFAULT_KV_BINDING;
+  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), source, q.get("kvAction") || 'keep', [], kvBinding);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
@@ -566,7 +578,7 @@ async function handleDeployWorker(request, env) {
   const b = await request.json().catch(() => ({}));
   const prefix = await getSystemPrefix(env);
   const codeUrl = processSourceUrl(b.codeUrl, prefix);
-  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || []);
+  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || b.kvbinding || DEFAULT_KV_BINDING);
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -574,7 +586,7 @@ async function handleDeployPages(request, env) {
   const b = await request.json().catch(() => ({}));
   const prefix = await getSystemPrefix(env);
   const zipUrl = processSourceUrl(b.zipUrl, prefix);
-  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || []);
+  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || b.kvbinding || DEFAULT_KV_BINDING);
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -825,9 +837,10 @@ function getMainPage() {
 	  </div>
 	  <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
       
-      <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
-        <div style="flex: 1;"><label>KV 名称（可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
-        <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
+      <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+        <div style="flex: 0 0 110px; min-width: 100px;"><label>KV 变量名</label><input type="text" id="kvBindingName" placeholder="KV"></div>
+        <div style="flex: 1; min-width: 130px;"><label>KV 名称（可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
+        <div style="width: 90px; flex-shrink: 0;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
 
       <!-- ENV 设置区 -->
@@ -863,10 +876,11 @@ function getMainPage() {
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
             <h3>🌐 页面部署</h3>
-            <p>在表单中填写 Account ID、API Token、KV 名称（可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
+            <p>在表单中填写 Account ID、API Token、KV 变量名（可选，留空默认 KV）、KV 名称（可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
+KV 变量名: MY_KV_BINDING （留空则为 KV，代码中用 env.MY_KV_BINDING.get 引用）
 KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-worker-app
@@ -874,6 +888,7 @@ KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清�
             <p><strong>Pages 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
+KV 变量名: MY_KV_BINDING （留空则为 KV，代码中用 env.MY_KV_BINDING.get 引用）
 KV 名称: MY_KV_STORE （可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-pages-site
@@ -895,6 +910,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     id: "YOUR_ACCOUNT_ID",
     token: "YOUR_API_TOKEN",
     kv: "MY_KV_STORE",
+    kvBinding: "MY_KV_BINDING",
     kvAction: "keep",
     name: "my-worker-app",
     source: "default"
@@ -908,6 +924,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     "id": "YOUR_ACCOUNT_ID",
     "token": "YOUR_API_TOKEN",
     "kv": "MY_KV_STORE",
+    "kvBinding": "MY_KV_BINDING",
     "kvAction": "keep",
     "source": "default",
     "name": "my-worker-app"
@@ -916,16 +933,16 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
             <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
   -H "Authorization: Bearer 您的系统访问密码" \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
-  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
+  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=MY_KV_STORE&kvBinding=MY_KV_BINDING&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
             <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
           <div class="info-section">
             <h3>🔗 GET 部署</h3>
             <p>直接在浏览器地址栏或脚本中通过 URL 调用。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&kvBinding=MY_KV_BINDING&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
             <p>Pages 部署示例：</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvname=&kvBinding=MY_KV_BINDING&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
           </div>
         </div>
       </div>
@@ -1010,8 +1027,10 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         
         // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认 keep
         let kvName = "";
+        let kvBinding = "KV";
         const installWorker = targetAcc.workers ? targetAcc.workers.find(w => w.name === 'install') : null;
         if (installWorker && installWorker.kvName) kvName = installWorker.kvName;
+        if (installWorker && installWorker.kvBindingName) kvBinding = installWorker.kvBindingName;
         
         output.value += '[信息] 匹配账户标识: ' + targetAcc.identifier + '\\n';
         output.value += '[信息] 目标更新项目: install\\n';
@@ -1021,6 +1040,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           accountId: targetAcc.accountId,
           apiToken: targetAcc.token,
           kvName: kvName,
+          kvBinding: kvBinding,
           kvAction: 'keep', // KV 保留
           workerName: 'install',
           codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
@@ -1075,6 +1095,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const accountId = document.getElementById('accountId').value.trim();
         const apiToken = document.getElementById('apiToken').value.trim();
         const kvName = document.getElementById('kvName').value.trim();
+        const kvBindingName = document.getElementById('kvBindingName').value.trim() || 'KV';
         const kvActionVal = document.getElementById('kvAction').value;
         const name = document.getElementById('projectName').value.trim();
         const src = document.getElementById(type === 'worker' ? 'workerCodeUrl' : 'pagesZipUrl').value.trim();
@@ -1094,8 +1115,8 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         output.value = '部署中...\\n'; output.scrollTop = output.scrollHeight;
         
         const payload = type === 'worker' 
-          ? {accountId, apiToken, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs}
-          : {accountId, apiToken, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs};
+          ? {accountId, apiToken, kvName, kvBinding: kvBindingName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs}
+          : {accountId, apiToken, kvName, kvBinding: kvBindingName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs};
           
         const res = await fetch(type === 'worker' ? '/api/deploy-worker' : '/api/deploy-pages', {
           method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
@@ -1199,6 +1220,7 @@ function getDashboardPage() {
               '<label class="temp-cb-wrap"><input type="checkbox" class="temp-checkbox" data-acc-index="' + accIndex + '"> 临时部署</label>' +
               '<select class="temp-type" data-acc-index="' + accIndex + '"><option value="worker">Worker</option><option value="page">Pages</option></select>' +
               '<input type="text" class="temp-name" data-acc-index="' + accIndex + '" placeholder="项目名称">' +
+              '<input type="text" class="temp-kvb" data-acc-index="' + accIndex + '" placeholder="KV变量名(默认KV)">' +
               '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV名(可选)">' +
               '<select class="temp-kv-action" data-acc-index="' + accIndex + '" disabled><option value="keep">保留</option><option value="clear">清空</option></select>' +
               '<input type="text" class="temp-source" data-acc-index="' + accIndex + '" placeholder="源地址(可选)">' +
@@ -1302,7 +1324,8 @@ function getDashboardPage() {
     function renderProjects(projects, type, accIndex) {
       if (!projects || projects.length === 0) return '<div style="padding:10px 0; color:#cbd5e1; text-align:center; font-size:12px;">无</div>';
       return projects.map(proj => {
-        const kvDisp = proj.kvName ? proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')' : '(留空/保留)';
+        const kvBind = proj.kvBindingName || 'KV';
+        const kvDisp = proj.kvName ? kvBind + ' ← ' + proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')' : '(留空/保留)';
         return '<div class="project-item">' +
           '<div class="project-title"><input type="checkbox" class="project-checkbox normal-checkbox" data-acc-index="' + accIndex + '" data-type="' + type + '" data-name="' + escapeHtml(proj.name) + '">' +
           '<span class="name">' + escapeHtml(proj.name) + '</span></div>' +
@@ -1317,10 +1340,11 @@ function getDashboardPage() {
         if (cb.classList.contains('temp-checkbox')) {
           const type = document.querySelector('.temp-type[data-acc-index="' + accIndex + '"]').value;
           const name = document.querySelector('.temp-name[data-acc-index="' + accIndex + '"]').value.trim();
+          const kvBindingName = document.querySelector('.temp-kvb[data-acc-index="' + accIndex + '"]').value.trim() || 'KV';
           const kvName = document.querySelector('.temp-kv[data-acc-index="' + accIndex + '"]').value.trim();
           const kvAction = document.querySelector('.temp-kv-action[data-acc-index="' + accIndex + '"]').value;
           const codeUrl = document.querySelector('.temp-source[data-acc-index="' + accIndex + '"]').value.trim();
-          if (name) selected.push({ type, account, proj: { name, kvName, kvAction, codeUrl: codeUrl || 'default' } });
+          if (name) selected.push({ type, account, proj: { name, kvName, kvBindingName, kvAction, codeUrl: codeUrl || 'default' } });
         } else {
           const type = cb.dataset.type, name = cb.dataset.name;
           const proj = type === 'worker' ? account.workers.find(w => w.name === name) : account.pages.find(p => p.name === name);
@@ -1352,6 +1376,7 @@ function getDashboardPage() {
           const payload = { 
             type: item.type, id: item.account.accountId, token: item.account.token, 
             kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', 
+            kvBinding: item.proj.kvBindingName || 'KV',
             name: item.proj.name, source: item.proj.codeUrl || 'default',
             envs: envs
           };
@@ -1396,7 +1421,7 @@ function getAccountsPage() {
     
     .dynamic-list { margin-top: 8px; }
     .dynamic-item { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; position: relative; }
-    @media (min-width: 600px) { .dynamic-item { display: flex; align-items: center; flex-wrap: nowrap; } .dynamic-item input[type="text"] { flex: 1; min-width: 80px; } }
+    @media (min-width: 600px) { .dynamic-item { display: flex; align-items: center; flex-wrap: nowrap; } .dynamic-item input[type="text"] { flex: 1; min-width: 60px; } }
     .item-actions { display: flex; gap: 4px; justify-content: flex-end; grid-column: span 2; }
     @media (min-width: 600px) { .item-actions { grid-column: auto; } }
     .add-btn { background: #e2e8f0; color: #475569; padding: 8px 12px; font-size: 13px; margin-top: 4px; }
@@ -1474,7 +1499,7 @@ function getAccountsPage() {
       </div>
       <div style="display:flex; gap:10px; margin-top:15px;">
         <button id="btnConfirmRestore" class="btn-primary" style="background:#f59e0b; flex:1;">确认恢复</button>
-        <button id="btnCancelRestore" class="btn-danger" style="background:#f1f5f9; color:#475569; flex:1;">取消</button>
+        <button id="btnCancelRestore" class="btn-danger" style="flex:1; background:#f1f5f9; color:#475569;">取消</button>
       </div>
     </div>
   </div>
@@ -1531,7 +1556,7 @@ function getAccountsPage() {
           let h = '<p style="font-size:13px; font-weight:600; color:#334155; margin:10px 0 5px;">' + typeName + '</p>';
           list.forEach((p, i) => {
             const hTag = p.show===false ? '<span style="color:#ef4444">[隐藏]</span> ' : '';
-            const kvInfo = p.kvName ? 'KV: ' + p.kvName + (p.kvAction==='clear'?'(清)':'') : '无KV';
+            const kvInfo = p.kvName ? 'KV: ' + (p.kvBindingName || 'KV') + ' ← ' + p.kvName + (p.kvAction==='clear'?'(清)':'') : '无KV';
             const uDis = i===0?'disabled':'', dDis = i===list.length-1?'disabled':'';
             h += '<div class="project-detail"><div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b> <br><span style="font-size:11px;">' + escapeHtml(kvInfo) + ' | 源: ' + escapeHtml(p.codeUrl||'默认') + '</span></div>' +
               '<div class="project-detail-actions">' +
@@ -1646,11 +1671,12 @@ function getAccountsPage() {
     document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildAccEnvRow(); });
 
     /* 编辑弹窗逻辑 */
-    function buildDynamicRow(type, name='', kvName='', codeUrl='', kvAction='keep', show=true) {
+    function buildDynamicRow(type, name='', kvBindingName='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
       
       div.innerHTML = 
         '<input type="text" class="i-name" placeholder="名称" value="' + escapeHtml(name) + '">' +
+        '<input type="text" class="i-kvb" placeholder="KV变量名" value="' + escapeHtml(kvBindingName) + '" style="flex:0 0 88px; min-width:70px;">' +
         '<input type="text" class="i-kv" placeholder="KV名称" value="' + escapeHtml(kvName) + '">' +
         '<select class="i-action" style="width:75px; flex-shrink:0; padding-left:4px; padding-right:4px;" ' + (!kvName?'disabled':'') + '><option value="keep" '+(kvAction==='keep'?'selected':'')+'>保留</option><option value="clear" '+(kvAction==='clear'?'selected':'')+'>清空</option></select>' +
         '<input type="text" class="i-url" placeholder="代码源/ZIP地址" value="' + escapeHtml(codeUrl) + '">' +
@@ -1686,8 +1712,8 @@ function getAccountsPage() {
       (acc.envs||[]).forEach(e => buildAccEnvRow(e.name, e.value, e.action));
       
       document.getElementById('editAccountShow').checked = acc.show !== false;
-      document.getElementById('workerList').innerHTML = ''; (acc.workers||[]).forEach(w => buildDynamicRow('worker', w.name, w.kvName, w.codeUrl, w.kvAction, w.show));
-      document.getElementById('pagesList').innerHTML = ''; (acc.pages||[]).forEach(p => buildDynamicRow('pages', p.name, p.kvName, p.codeUrl, p.kvAction, p.show));
+      document.getElementById('workerList').innerHTML = ''; (acc.workers||[]).forEach(w => buildDynamicRow('worker', w.name, w.kvBindingName, w.kvName, w.codeUrl, w.kvAction, w.show));
+      document.getElementById('pagesList').innerHTML = ''; (acc.pages||[]).forEach(p => buildDynamicRow('pages', p.name, p.kvBindingName, p.kvName, p.codeUrl, p.kvAction, p.show));
       document.getElementById('editModal').classList.add('active');
     }
 
@@ -1701,7 +1727,9 @@ function getAccountsPage() {
       if (!identifier || !accountId || !token) return alert('必填项不能为空');
       
       const getList = (id) => Array.from(document.querySelectorAll('#' + id + ' .dynamic-item')).map(el => ({
-        name: el.querySelector('.i-name').value.trim(), kvName: el.querySelector('.i-kv').value.trim(),
+        name: el.querySelector('.i-name').value.trim(),
+        kvBindingName: el.querySelector('.i-kvb').value.trim() || 'KV',
+        kvName: el.querySelector('.i-kv').value.trim(),
         kvAction: el.querySelector('.i-action').value, codeUrl: el.querySelector('.i-url').value.trim(),
         show: el.querySelector('.i-show').checked
       })).filter(i => i.name);
