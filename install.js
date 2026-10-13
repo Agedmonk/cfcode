@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202610131725"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202610131730"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -901,7 +901,7 @@ function getMainPage() {
       </div>
 
       <!-- ENV 设置区 -->
-      <div class="attach-box">
+      <div class="attach-box" style="margin-bottom: 15px;">
         <label class="attach-title">
           <input type="checkbox" id="enableEnv" style="margin-right:8px; width:auto;"> 附加环境变量 (ENV)
         </label>
