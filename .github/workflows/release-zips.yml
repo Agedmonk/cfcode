@@ -14,6 +14,7 @@ on:
       - 'mirror.js'
       - 'order.js'
       - 'cfnext.js'
+      - 'next.js'
       - 'version.json'
   workflow_dispatch:
 
@@ -104,6 +105,11 @@ jobs:
           if [ -f "cfnext.js" ]; then
             echo "发现 cfnext.js，添加到发布列表。"
             UPLOAD_LIST="$UPLOAD_LIST cfnext.js"
+          fi
+
+          if [ -f "next.js" ]; then
+            echo "发现 next.js，添加到发布列表。"
+            UPLOAD_LIST="$UPLOAD_LIST next.js"
           fi
 
           if [ -f "version.json" ]; then
