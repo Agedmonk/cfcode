@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202611061620"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202611061630"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -132,7 +132,7 @@ async function findAccountIndex(env, identifier) {
 }
 
 // ==================== Worker 部署核心 ====================
-async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = [], kvBinding = 'KV') {
+async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = [], kvBinding = '') {
   const logs = [];
   const log = (msg) => logs.push(msg);
   try {
@@ -141,7 +141,6 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400 };
     }
 
-    const bindName = (kvBinding && kvBinding.trim()) ? kvBinding.trim() : "KV";
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
     log(`[1/4] 拉取代码: ${codeUrl}`);
     const res = await fetchWithTimeout(codeUrl, {}, 15000);
@@ -153,11 +152,51 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     let bindings = [];
 
     log(`[2/4] 检查并处理原有配置(KV/ENV)...`);
+    // 先尝试拉取原项目的绑定关系，以便保留原有绑定
+    try {
+      const get = await fetchWithTimeout(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, 
+        { headers }, 
+        15000
+      );
+      if (get.ok) {
+        const data = await get.json();
+        if (data.success && Array.isArray(data.result)) {
+          bindings = data.result;
+          const kvCount = bindings.filter(b => b.type === 'kv_namespace').length;
+          const envCount = bindings.filter(b => b.type === 'plain_text' || b.type === 'secret_text').length;
+          const otherCount = bindings.length - kvCount - envCount;
+          let details = [];
+          if (kvCount > 0) details.push(`KV ${kvCount} 个`);
+          if (envCount > 0) details.push(`ENV ${envCount} 个`);
+          if (otherCount > 0) details.push(`其他 ${otherCount} 个`);
+          log(`[成功] 获取到原有配置: 共 ${bindings.length} 项 ${details.length > 0 ? '(' + details.join(', ') + ')' : ''}`);
+        } else {
+          log(`[提示] 原项目没有绑定配置`);
+        }
+      } else if (get.status === 404) {
+        log(`[提示] 属于全新项目，无旧配置`);
+      } else {
+        log(`[警告] 获取旧配置 API 异常: HTTP ${get.status}`);
+      }
+    } catch (err) {
+      log(`[警告] 解析旧配置出错: ${err.message}`);
+    }
+
+    // 若指定了 KV 名称，则进行创建/查找并绑定；若留空则直接保留上面拉取到的原有 KV 绑定关系
     if (kvName && kvName.trim()) {
-      log(`[提示] 正在指定新 KV 命名空间 [${kvName}] (绑定变量名: ${bindName})...`);
+      const targetKvName = kvName.trim();
+      let bindName = (kvBinding && kvBinding.trim()) ? kvBinding.trim() : "";
+      if (!bindName) {
+        // 如果未填 KV 变量名，优先复用原有第一个 KV 绑定的变量名，若无则回退为 "KV"
+        const existingKvBinding = bindings.find(b => b.type === 'kv_namespace');
+        bindName = existingKvBinding ? existingKvBinding.name : "KV";
+      }
+
+      log(`[提示] 正在配置 KV 命名空间 [${targetKvName}] (绑定变量名: ${bindName})...`);
       const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
       if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
-      const existing = kvList.result.find(i => i.title === kvName);
+      const existing = kvList.result.find(i => i.title === targetKvName);
       
       let kvId;
       if (existing) {
@@ -168,54 +207,27 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
           log(`[提示] 找到已存在同名 KV，执行清空策略 (先删后建)...`);
           const del = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000)).json();
           if (!del.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(del.errors)}`);
-          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
           if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
           kvId = create.result.id;
         }
       } else {
         log(`[提示] 未找到同名 KV，新建...`);
-        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
+        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
         if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
         kvId = create.result.id;
       }
-      bindings = [{ type: "kv_namespace", name: bindName, namespace_id: kvId }];
+
+      const newKvBindingObj = { type: "kv_namespace", name: bindName, namespace_id: kvId };
+      const existBindIdx = bindings.findIndex(b => b.name === bindName);
+      if (existBindIdx >= 0) {
+        bindings[existBindIdx] = newKvBindingObj;
+      } else {
+        bindings.push(newKvBindingObj);
+      }
       log(`[成功] KV 绑定配置完成 (变量名: ${bindName}, ID: ${kvId})`);
     } else {
-      log(`[提示] 未指定新 KV，尝试拉取原有绑定...`);
-      try {
-        const get = await fetchWithTimeout(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, 
-          { headers }, 
-          15000
-        );
-        
-        if (get.ok) {
-          const data = await get.json();
-          if (data.success && Array.isArray(data.result)) {
-            bindings = data.result;
-            
-            // 分类统计原有绑定类型
-            const kvCount = bindings.filter(b => b.type === 'kv_namespace').length;
-            const envCount = bindings.filter(b => b.type === 'plain_text' || b.type === 'secret_text').length;
-            const otherCount = bindings.length - kvCount - envCount;
-            
-            let details = [];
-            if (kvCount > 0) details.push(`KV ${kvCount} 个`);
-            if (envCount > 0) details.push(`ENV ${envCount} 个`);
-            if (otherCount > 0) details.push(`其他 ${otherCount} 个`);
-            
-            log(`[成功] 获取并保留原有配置: 共 ${bindings.length} 项 ${details.length > 0 ? '(' + details.join(', ') + ')' : ''}`);
-          } else {
-            log(`[提示] 原项目没有绑定配置`);
-          }
-        } else if (get.status === 404) {
-          log(`[提示] 属于全新项目，无需保留旧配置`);
-        } else {
-          log(`[警告] 获取旧配置 API 异常: HTTP ${get.status}`);
-        }
-      } catch (err) {
-        log(`[警告] 解析旧配置出错: ${err.message}`);
-      }
+      log(`[提示] 未指定新 KV，保留原有 KV 绑定关系`);
     }
 
     log(`[3/4] 处理附加环境变量 (ENV)...`);
@@ -342,9 +354,8 @@ async function sha256Hex(uint8array) {
 }
 
 // ==================== 补充缺失的 Pages 配置更新函数 ====================
-async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = [], kvBinding = 'KV') {
+async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = [], kvBinding = '') {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
-  const bindName = (kvBinding && kvBinding.trim()) ? kvBinding.trim() : "KV";
   try {
     log(`  - 拉取当前 Pages 项目配置...`);
     const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
@@ -363,6 +374,12 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
 
     // 1. 处理 KV 绑定
     if (kvName) {
+      let bindName = (kvBinding && kvBinding.trim()) ? kvBinding.trim() : "";
+      if (!bindName) {
+        const existingKeys = Object.keys(kvNamespacesProd);
+        bindName = existingKeys.length > 0 ? existingKeys[0] : "KV";
+      }
+
       const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
       const existing = kvList.result?.find(i => i.title === kvName);
       let kvId;
@@ -384,7 +401,7 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
         kvId = create.result.id;
       }
       
-      // 同步给两个环境绑定 KV
+      // 同步给两个环境绑定 KV（保留原有的其他 KV 绑定）
       kvNamespacesProd[bindName] = { namespace_id: kvId }; 
       kvNamespacesPrev[bindName] = { namespace_id: kvId }; 
       log(`  - KV 绑定就绪 (变量名: ${bindName}, ID: ${kvId})`);
@@ -437,7 +454,7 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
 }
 
 // ==================== Pages 部署核心 ====================
-async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = [], kvBinding = 'KV') {
+async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = [], kvBinding = '') {
   const logs = [];
   const log = (msg) => logs.push(msg);
   try {
@@ -477,7 +494,7 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       log(`[4/6] 更新项目配置(KV/ENV)...`);
       await updatePagesConfig(accountId, apiToken, projectName, kvName ? kvName.trim() : "", logs, log, kvAction, envs, kvBinding);
     } else {
-      log(`[4/6] 无KV及ENV配置，跳过更新设置...`);
+      log(`[4/6] 无新KV及ENV配置，保留原有绑定设置...`);
     }
 
     log(`[5/6] 构建 manifest...`);
@@ -531,7 +548,7 @@ function processSourceUrl(url, prefix) {
 }
 
 // ==================== 统一部署分发 ====================
-async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = 'KV') {
+async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = '') {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
   if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400 };
@@ -549,7 +566,7 @@ async function handleUnifiedDeploy(request, env) {
       type: b.type, 
       id: b.id || b.accountid, 
       token: b.token, 
-      kvBinding: b.kvBinding || b.kvbinding || b.kvVar || b.kvvar || 'KV',
+      kvBinding: b.kvBinding || b.kvbinding || b.kvVar || b.kvvar || '',
       kv: b.kv || b.kvname, 
       kvAction: b.kvAction || b.kvaction || 'keep', 
       name: b.name || b.projectname, 
@@ -562,7 +579,7 @@ async function handleUnifiedDeploy(request, env) {
       type: fd.get("type"), 
       id: fd.get("id") || fd.get("accountid"), 
       token: fd.get("token"), 
-      kvBinding: fd.get("kvBinding") || fd.get("kvbinding") || fd.get("kvVar") || fd.get("kvvar") || 'KV',
+      kvBinding: fd.get("kvBinding") || fd.get("kvbinding") || fd.get("kvVar") || fd.get("kvvar") || '',
       kv: fd.get("kv") || fd.get("kvname"), 
       kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', 
       name: fd.get("name") || fd.get("projectname"), 
@@ -580,7 +597,7 @@ async function handleGetDeploy(url, env) {
   const q = url.searchParams;
   const prefix = await getSystemPrefix(env);
   const source = processSourceUrl(q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", prefix);
-  const kvBinding = q.get("kvBinding") || q.get("kvbinding") || q.get("kvVar") || q.get("kvvar") || "KV";
+  const kvBinding = q.get("kvBinding") || q.get("kvbinding") || q.get("kvVar") || q.get("kvvar") || "";
   const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), source, q.get("kvAction") || 'keep', [], kvBinding);
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
@@ -589,7 +606,7 @@ async function handleDeployWorker(request, env) {
   const b = await request.json().catch(() => ({}));
   const prefix = await getSystemPrefix(env);
   const codeUrl = processSourceUrl(b.codeUrl, prefix);
-  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || 'KV');
+  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '');
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -597,7 +614,7 @@ async function handleDeployPages(request, env) {
   const b = await request.json().catch(() => ({}));
   const prefix = await getSystemPrefix(env);
   const zipUrl = processSourceUrl(b.zipUrl, prefix);
-  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || 'KV');
+  const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '');
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -849,8 +866,8 @@ function getMainPage() {
 	  <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
       
       <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
-        <div style="width: 120px;"><label>KV 变量名</label><input type="text" id="kvBinding" value="KV" placeholder="默认 KV"></div>
-        <div style="flex: 1;"><label>KV 名称（命名空间，可选）</label><input type="text" id="kvName" placeholder="保留原绑定留空即可"></div>
+        <div style="width: 140px;"><label>KV 变量名（可选）</label><input type="text" id="kvBinding" placeholder="留空保留原有关系"></div>
+        <div style="flex: 1;"><label>KV 名称（命名空间，可选）</label><input type="text" id="kvName" placeholder="留空保留原绑定"></div>
         <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
 
@@ -887,11 +904,11 @@ function getMainPage() {
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
             <h3>🌐 页面部署</h3>
-            <p>在表单中填写 Account ID、API Token、KV 变量名（默认 KV）、KV 名称（命名空间，可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
+            <p>在表单中填写 Account ID、API Token、KV 变量名（可选，留空保留原有关系）、KV 名称（命名空间，可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址并点击部署按钮。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
-KV 变量名: KV （代码中调用的绑定变量名，如 env.KV，留空默认 KV）
+KV 变量名: KV （可留空，留空则保留原有绑定关系；新绑定且未填时默认使用 KV）
 KV 名称: MY_KV_STORE （命名空间名称，可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-worker-app
@@ -899,7 +916,7 @@ KV 名称: MY_KV_STORE （命名空间名称，可留空）保留：使用原KV�
             <p><strong>Pages 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
-KV 变量名: KV （代码中调用的绑定变量名，如 env.KV，留空默认 KV）
+KV 变量名: KV （可留空，留空则保留原有绑定关系；新绑定且未填时默认使用 KV）
 KV 名称: MY_KV_STORE （命名空间名称，可留空）保留：使用原KV内容，清空：清空原KV内容
 变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
 项目名称: my-pages-site
@@ -907,7 +924,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           </div>
           <div class="info-section">
             <h3>⚡ POST 部署</h3>
-            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式（可通过 <code>kvBinding</code> 指定 KV 变量名，不传则默认为 <code>KV</code>）。</p>
+            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式（可通过 <code>kvBinding</code> 指定 KV 变量名，留空则保留原有绑定关系）。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
             <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
             <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
@@ -920,7 +937,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     type: "worker",
     id: "YOUR_ACCOUNT_ID",
     token: "YOUR_API_TOKEN",
-    kvBinding: "KV",
+    kvBinding: "",
     kv: "MY_KV_STORE",
     kvAction: "keep",
     name: "my-worker-app",
@@ -934,7 +951,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     "type": "worker",
     "id": "YOUR_ACCOUNT_ID",
     "token": "YOUR_API_TOKEN",
-    "kvBinding": "KV",
+    "kvBinding": "",
     "kv": "MY_KV_STORE",
     "kvAction": "keep",
     "source": "default",
@@ -944,16 +961,16 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
             <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
   -H "Authorization: Bearer 您的系统访问密码" \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
-  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=KV&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
+  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default"</code></pre>
             <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
           <div class="info-section">
             <h3>🔗 GET 部署</h3>
-            <p>直接在浏览器地址栏或脚本中通过 URL 调用（可通过 <code>kvBinding</code> 参数指定 KV 变量名，默认 <code>KV</code>）。</p>
+            <p>直接在浏览器地址栏或脚本中通过 URL 调用（可通过 <code>kvBinding</code> 参数指定 KV 变量名，留空则保留原有绑定关系）。</p>
             <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=KV&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=&projectname=my-worker-app&codeurl=default&pwd=您的系统访问密码</code></pre>
             <p>Pages 部署示例：</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=KV&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
           </div>
         </div>
       </div>
@@ -1036,9 +1053,9 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
            return;
         }
         
-        // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认 keep
+        // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认保留原有绑定关系
         let kvName = "";
-        let kvBinding = "KV";
+        let kvBinding = "";
         const installWorker = targetAcc.workers ? targetAcc.workers.find(w => w.name === 'install') : null;
         if (installWorker) {
           if (installWorker.kvName) kvName = installWorker.kvName;
@@ -1107,7 +1124,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       async function runDeploy(type) {
         const accountId = document.getElementById('accountId').value.trim();
         const apiToken = document.getElementById('apiToken').value.trim();
-        const kvBinding = document.getElementById('kvBinding').value.trim() || 'KV';
+        const kvBinding = document.getElementById('kvBinding').value.trim();
         const kvName = document.getElementById('kvName').value.trim();
         const kvActionVal = document.getElementById('kvAction').value;
         const name = document.getElementById('projectName').value.trim();
@@ -1233,7 +1250,7 @@ function getDashboardPage() {
               '<label class="temp-cb-wrap"><input type="checkbox" class="temp-checkbox" data-acc-index="' + accIndex + '"> 临时部署</label>' +
               '<select class="temp-type" data-acc-index="' + accIndex + '"><option value="worker">Worker</option><option value="page">Pages</option></select>' +
               '<input type="text" class="temp-name" data-acc-index="' + accIndex + '" placeholder="项目名称">' +
-              '<input type="text" class="temp-kv-binding" data-acc-index="' + accIndex + '" value="KV" placeholder="KV变量(默认KV)">' +
+              '<input type="text" class="temp-kv-binding" data-acc-index="' + accIndex + '" placeholder="KV变量名(可选)">' +
               '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV名(可选)">' +
               '<select class="temp-kv-action" data-acc-index="' + accIndex + '" disabled><option value="keep">保留</option><option value="clear">清空</option></select>' +
               '<input type="text" class="temp-source" data-acc-index="' + accIndex + '" placeholder="源地址(可选)">' +
@@ -1337,8 +1354,8 @@ function getDashboardPage() {
     function renderProjects(projects, type, accIndex) {
       if (!projects || projects.length === 0) return '<div style="padding:10px 0; color:#cbd5e1; text-align:center; font-size:12px;">无</div>';
       return projects.map(proj => {
-        const bName = proj.kvBinding || 'KV';
-        const kvDisp = proj.kvName ? (bName + ' -> ' + proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')') : '(留空/保留)';
+        const bName = proj.kvBinding ? proj.kvBinding : '(原变量)';
+        const kvDisp = proj.kvName ? (bName + ' -> ' + proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')') : '(留空/保留原有关系)';
         return '<div class="project-item">' +
           '<div class="project-title"><input type="checkbox" class="project-checkbox normal-checkbox" data-acc-index="' + accIndex + '" data-type="' + type + '" data-name="' + escapeHtml(proj.name) + '">' +
           '<span class="name">' + escapeHtml(proj.name) + '</span></div>' +
@@ -1353,7 +1370,7 @@ function getDashboardPage() {
         if (cb.classList.contains('temp-checkbox')) {
           const type = document.querySelector('.temp-type[data-acc-index="' + accIndex + '"]').value;
           const name = document.querySelector('.temp-name[data-acc-index="' + accIndex + '"]').value.trim();
-          const kvBinding = document.querySelector('.temp-kv-binding[data-acc-index="' + accIndex + '"]').value.trim() || 'KV';
+          const kvBinding = document.querySelector('.temp-kv-binding[data-acc-index="' + accIndex + '"]').value.trim();
           const kvName = document.querySelector('.temp-kv[data-acc-index="' + accIndex + '"]').value.trim();
           const kvAction = document.querySelector('.temp-kv-action[data-acc-index="' + accIndex + '"]').value;
           const codeUrl = document.querySelector('.temp-source[data-acc-index="' + accIndex + '"]').value.trim();
@@ -1388,7 +1405,7 @@ function getDashboardPage() {
 
           const payload = { 
             type: item.type, id: item.account.accountId, token: item.account.token, 
-            kvBinding: item.proj.kvBinding || 'KV',
+            kvBinding: item.proj.kvBinding || '',
             kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', 
             name: item.proj.name, source: item.proj.codeUrl || 'default',
             envs: envs
@@ -1569,8 +1586,8 @@ function getAccountsPage() {
           let h = '<p style="font-size:13px; font-weight:600; color:#334155; margin:10px 0 5px;">' + typeName + '</p>';
           list.forEach((p, i) => {
             const hTag = p.show===false ? '<span style="color:#ef4444">[隐藏]</span> ' : '';
-            const bName = p.kvBinding || 'KV';
-            const kvInfo = p.kvName ? ('KV: ' + bName + ' -> ' + p.kvName + (p.kvAction==='clear'?'(清)':'')) : '无KV';
+            const bName = p.kvBinding ? p.kvBinding : '(原变量)';
+            const kvInfo = p.kvName ? ('KV: ' + bName + ' -> ' + p.kvName + (p.kvAction==='clear'?'(清)':'')) : '保留原KV关系';
             const uDis = i===0?'disabled':'', dDis = i===list.length-1?'disabled':'';
             h += '<div class="project-detail"><div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b> <br><span style="font-size:11px;">' + escapeHtml(kvInfo) + ' | 源: ' + escapeHtml(p.codeUrl||'默认') + '</span></div>' +
               '<div class="project-detail-actions">' +
@@ -1685,12 +1702,12 @@ function getAccountsPage() {
     document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildAccEnvRow(); });
 
     /* 编辑弹窗逻辑 */
-    function buildDynamicRow(type, name='', kvBinding='KV', kvName='', codeUrl='', kvAction='keep', show=true) {
+    function buildDynamicRow(type, name='', kvBinding='', kvName='', codeUrl='', kvAction='keep', show=true) {
       const div = document.createElement('div'); div.className = 'dynamic-item';
       
       div.innerHTML = 
         '<input type="text" class="i-name" placeholder="项目名称" value="' + escapeHtml(name) + '">' +
-        '<input type="text" class="i-kv-binding" placeholder="KV变量名" value="' + escapeHtml(kvBinding || 'KV') + '" style="max-width:95px;">' +
+        '<input type="text" class="i-kv-binding" placeholder="KV变量名(可选)" value="' + escapeHtml(kvBinding) + '" style="max-width:110px;">' +
         '<input type="text" class="i-kv" placeholder="KV名称(命名空间)" value="' + escapeHtml(kvName) + '">' +
         '<select class="i-action" style="width:75px; flex-shrink:0; padding-left:4px; padding-right:4px;" ' + (!kvName?'disabled':'') + '><option value="keep" '+(kvAction==='keep'?'selected':'')+'>保留</option><option value="clear" '+(kvAction==='clear'?'selected':'')+'>清空</option></select>' +
         '<input type="text" class="i-url" placeholder="代码源/ZIP地址" value="' + escapeHtml(codeUrl) + '">' +
@@ -1726,8 +1743,8 @@ function getAccountsPage() {
       (acc.envs||[]).forEach(e => buildAccEnvRow(e.name, e.value, e.action));
       
       document.getElementById('editAccountShow').checked = acc.show !== false;
-      document.getElementById('workerList').innerHTML = ''; (acc.workers||[]).forEach(w => buildDynamicRow('worker', w.name, w.kvBinding || 'KV', w.kvName, w.codeUrl, w.kvAction, w.show));
-      document.getElementById('pagesList').innerHTML = ''; (acc.pages||[]).forEach(p => buildDynamicRow('pages', p.name, p.kvBinding || 'KV', p.kvName, p.codeUrl, p.kvAction, p.show));
+      document.getElementById('workerList').innerHTML = ''; (acc.workers||[]).forEach(w => buildDynamicRow('worker', w.name, w.kvBinding || '', w.kvName, w.codeUrl, w.kvAction, w.show));
+      document.getElementById('pagesList').innerHTML = ''; (acc.pages||[]).forEach(p => buildDynamicRow('pages', p.name, p.kvBinding || '', p.kvName, p.codeUrl, p.kvAction, p.show));
       document.getElementById('editModal').classList.add('active');
     }
 
@@ -1742,7 +1759,7 @@ function getAccountsPage() {
       
       const getList = (id) => Array.from(document.querySelectorAll('#' + id + ' .dynamic-item')).map(el => ({
         name: el.querySelector('.i-name').value.trim(), 
-        kvBinding: el.querySelector('.i-kv-binding').value.trim() || 'KV',
+        kvBinding: el.querySelector('.i-kv-binding').value.trim(),
         kvName: el.querySelector('.i-kv').value.trim(),
         kvAction: el.querySelector('.i-action').value, 
         codeUrl: el.querySelector('.i-url').value.trim(),
