@@ -1,4 +1,4 @@
-name: 打包发布文件并推送到公开仓库
+name: 版本同步与打包发布
 
 on:
   push:
@@ -19,10 +19,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  release-zips:
+  sync-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 允许向当前仓库的 Release 写入
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -30,7 +30,58 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 生成 ZIP 文件并准备附件列表
+      - name: 检查变动文件
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "changed_files=$(git ls-files | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed_files=$(git ls-files | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          else
+            echo "changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 提取版本号并同步到仓库 (当 install.js 变动或手动触发时)
+        run: |
+          CHANGED="${{ steps.changes.outputs.changed_files }}"
+          
+          # 仅在手动执行或 install.js 发生变动时提取版本
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || echo "$CHANGED" | grep -qw "install.js"; then
+            JS_FILE="install.js"
+            if [ ! -f "$JS_FILE" ]; then
+              echo "错误: 找不到文件 $JS_FILE"
+              exit 1
+            fi
+
+            EXTRACTED_VERSION=$(grep -oP 'const CURRENT_VERSION\s*=\s*"\K[^"]+' "$JS_FILE" | head -n 1)
+            if [ -z "$EXTRACTED_VERSION" ]; then
+              echo "错误: 找不到 CURRENT_VERSION"
+              exit 1
+            fi
+            
+            echo "成功提取到版本号: $EXTRACTED_VERSION"
+            echo "{\"version\": \"$EXTRACTED_VERSION\"}" > version.json
+
+            # 生成仓库内自用的 install.zip
+            zip -q install.zip install.js
+
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git config --local user.name "github-actions[bot]"
+            git add version.json install.zip
+            
+            if ! git diff --staged --quiet; then
+              git commit -m "已同步版本至 v$EXTRACTED_VERSION 并打包压缩 [skip ci]"
+              git pull --rebase origin main
+              git push
+              echo "✅ 版本更新与仓库同步已完成！"
+            else
+              echo "version.json 与 install.zip 无实质变动，跳过提交"
+            fi
+          else
+            echo "install.js 未变动，跳过版本提取步骤"
+          fi
+
+      - name: 生成 Release 专用的 ZIP 文件并准备附件列表
         id: package
         run: |
           declare -A file_map=(
@@ -46,19 +97,17 @@ jobs:
           )
 
           UPLOAD_LIST=""
+          CHANGED="${{ steps.changes.outputs.changed_files }}"
 
-          # 定义一个专用的打包函数：重命名文件为 _worker.js 后放入压缩包
+          # 清理上一步可能残留在工作区的 install.zip，避免 zip 追加导致包内同时存在 install.js 和 _worker.js
+          rm -f install.zip
+
           pack_zip() {
             local src_file=$1
             local zip_name=$2
-            
-            # 1. 创建一个临时构建目录
             mkdir -p temp_build_dir
-            # 2. 将原文件复制到临时目录，并重命名为 _worker.js
             cp "$src_file" "temp_build_dir/_worker.js"
-            # 3. 切换到临时目录执行 zip，确保 zip 内部的相对路径和文件名仅为 _worker.js
-            (cd temp_build_dir && zip "../$zip_name" "_worker.js")
-            # 4. 清理临时目录
+            (cd temp_build_dir && zip -q "../$zip_name" "_worker.js")
             rm -rf temp_build_dir
           }
 
@@ -66,23 +115,15 @@ jobs:
             echo "触发方式: 手动执行 - 打包全部 ZIP"
             for js_file in "${!file_map[@]}"; do
               if [ -f "$js_file" ]; then
-                # 调用自定义的打包函数
                 pack_zip "$js_file" "${file_map[$js_file]}"
                 UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
               fi
             done
           else
             echo "触发方式: 自动触发 - 仅打包变动的文件"
-            if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-              changed_files=$(git ls-files)
-            else
-              changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
-            fi
-
             for js_file in "${!file_map[@]}"; do
-              if echo "$changed_files" | grep -q "^$js_file$"; then
+              if echo "$CHANGED" | grep -qw "$js_file"; then
                 if [ -f "$js_file" ]; then
-                  # 调用自定义的打包函数
                   pack_zip "$js_file" "${file_map[$js_file]}"
                   UPLOAD_LIST="$UPLOAD_LIST ${file_map[$js_file]}"
                 fi
@@ -90,33 +131,13 @@ jobs:
             done
           fi
 
-          # ================== 新增逻辑 ==================
-          # 依然保留对源文件本身的直接上传（非 zip 形式）
-          if [ -f "install.js" ]; then
-            echo "发现 install.js，添加到发布列表。"
-            UPLOAD_LIST="$UPLOAD_LIST install.js"
-          fi
-
-          if [ -f "_worker.js" ]; then
-            echo "发现 _worker.js，添加到发布列表。"
-            UPLOAD_LIST="$UPLOAD_LIST _worker.js"
-          fi
-          
-          if [ -f "cfnext.js" ]; then
-            echo "发现 cfnext.js，添加到发布列表。"
-            UPLOAD_LIST="$UPLOAD_LIST cfnext.js"
-          fi
-
-          if [ -f "next.js" ]; then
-            echo "发现 next.js，添加到发布列表。"
-            UPLOAD_LIST="$UPLOAD_LIST next.js"
-          fi
-
-          if [ -f "version.json" ]; then
-            echo "发现 version.json，添加到发布列表。"
-            UPLOAD_LIST="$UPLOAD_LIST version.json"
-          fi
-          # ============================================
+          # 附加源文件与刚才更新好的最新 version.json
+          for raw_file in "install.js" "_worker.js" "cfnext.js" "next.js" "version.json"; do
+            if [ -f "$raw_file" ]; then
+              echo "发现 $raw_file，添加到发布列表。"
+              UPLOAD_LIST="$UPLOAD_LIST $raw_file"
+            fi
+          done
 
           UPLOAD_LIST=$(echo $UPLOAD_LIST | xargs)
 
@@ -136,12 +157,10 @@ jobs:
           RELEASE_NAME="自动打包最新版本"
           
           if ! gh release view $TAG_NAME &>/dev/null; then
-            echo "当前仓库 Release 不存在，正在新建..."
             gh release create $TAG_NAME $UPLOAD_LIST \
               --title "$RELEASE_NAME" \
               --notes "内部构建生成的最新 ZIP 压缩包。"
           else
-            echo "当前仓库 Release 已存在，正在覆盖更新..."
             gh release upload $TAG_NAME $UPLOAD_LIST --clobber
           fi
 
@@ -152,17 +171,13 @@ jobs:
         run: |
           TAG_NAME="latest"
           RELEASE_NAME="自动打包最新版本"
-          
-          # 自动获取当前用户，拼接得到目标仓库名，如: Agedmonk/public
           TARGET_REPO="${{ github.repository_owner }}/public"
           
           if ! gh release view $TAG_NAME --repo $TARGET_REPO &>/dev/null; then
-            echo "目标仓库 $TARGET_REPO Release 不存在，正在新建..."
             gh release create $TAG_NAME $UPLOAD_LIST \
               --repo $TARGET_REPO \
               --title "$RELEASE_NAME" \
               --notes "公开分发：自动化构建生成的最新 ZIP 压缩包与版本信息。"
           else
-            echo "目标仓库 $TARGET_REPO Release 已存在，正在覆盖更新..."
             gh release upload $TAG_NAME $UPLOAD_LIST --repo $TARGET_REPO --clobber
           fi
