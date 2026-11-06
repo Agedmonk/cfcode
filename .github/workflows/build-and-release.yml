@@ -133,7 +133,7 @@ jobs:
           fi
 
           # 附加源文件与刚才更新好的最新 version.json
-          for raw_file in "install.js" "_worker.js" "cfnext.js" "next.js" "version.json"; do
+          for raw_file in "install.js" "_worker.js" "cfnext.js" "next.js" "version.json" "bpb.js"; do
             if [ -f "$raw_file" ]; then
               echo "发现 $raw_file，添加到发布列表。"
               UPLOAD_LIST="$UPLOAD_LIST $raw_file"
