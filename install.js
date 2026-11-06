@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202611061630"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202611061700"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -116,6 +116,59 @@ async function fetchWithTimeout(url, options = {}, timeout = 15000) {
   }
 }
 
+// 支持分页遍历（per_page=100）与忽略大小写的 KV 命名空间查找函数
+async function findKvNamespaceByTitle(accountId, headers, targetTitle) {
+  const normalizedTarget = targetTitle.trim().toLowerCase();
+  let page = 1;
+  while (page <= 10) {
+    const res = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100&page=${page}`,
+      { headers },
+      15000
+    );
+    const kvList = await res.json();
+    if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
+    const list = kvList.result || [];
+    const found = list.find(i => (i.title || "").trim().toLowerCase() === normalizedTarget);
+    if (found) return found;
+    const totalPages = kvList.result_info?.total_pages || 1;
+    if (page >= totalPages || list.length < 100) break;
+    page++;
+  }
+  return null;
+}
+
+// 统一处理 KV 获取、保留或清空重建逻辑（含 10014 冲突兜底）
+async function resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, log) {
+  let existing = await findKvNamespaceByTitle(accountId, headers, targetKvName);
+  if (existing) {
+    if (kvAction === 'keep') {
+      log(`[提示] 找到已存在同名 KV [${existing.title}]，执行保留策略...`);
+      return existing.id;
+    } else {
+      log(`[提示] 找到已存在同名 KV [${existing.title}]，执行清空策略 (先删后建)...`);
+      const del = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000)).json();
+      if (!del.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(del.errors)}`);
+      const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
+      if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+      return create.result.id;
+    }
+  } else {
+    log(`[提示] 未找到同名 KV，新建...`);
+    const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
+    if (!create.success) {
+      // 如果遇到 10014 已存在报错，再次查询兜底复用
+      if (create.errors && create.errors.some(e => e.code === 10014)) {
+        log(`[提示] 检测到同名 KV 已存在，正在重新定位并复用...`);
+        existing = await findKvNamespaceByTitle(accountId, headers, targetKvName);
+        if (existing) return existing.id;
+      }
+      throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
+    }
+    return create.result.id;
+  }
+}
+
 // ==================== KV 账户管理 ====================
 async function getAccountsList(env) {
   try {
@@ -194,29 +247,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       }
 
       log(`[提示] 正在配置 KV 命名空间 [${targetKvName}] (绑定变量名: ${bindName})...`);
-      const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
-      if (!kvList.success) throw new Error(`查询 KV 失败: ${JSON.stringify(kvList.errors)}`);
-      const existing = kvList.result.find(i => i.title === targetKvName);
-      
-      let kvId;
-      if (existing) {
-        if (kvAction === 'keep') {
-          log(`[提示] 找到已存在同名 KV，执行保留策略...`);
-          kvId = existing.id;
-        } else {
-          log(`[提示] 找到已存在同名 KV，执行清空策略 (先删后建)...`);
-          const del = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000)).json();
-          if (!del.success) throw new Error(`删除旧 KV 失败: ${JSON.stringify(del.errors)}`);
-          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
-          if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
-          kvId = create.result.id;
-        }
-      } else {
-        log(`[提示] 未找到同名 KV，新建...`);
-        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: targetKvName }) }, 15000)).json();
-        if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
-        kvId = create.result.id;
-      }
+      const kvId = await resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, log);
 
       const newKvBindingObj = { type: "kv_namespace", name: bindName, namespace_id: kvId };
       const existBindIdx = bindings.findIndex(b => b.name === bindName);
@@ -380,26 +411,7 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
         bindName = existingKeys.length > 0 ? existingKeys[0] : "KV";
       }
 
-      const kvList = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { headers }, 15000)).json();
-      const existing = kvList.result?.find(i => i.title === kvName);
-      let kvId;
-      
-      if (existing) {
-        if (kvAction === 'clear') {
-          log(`  - 找到同名 KV，执行清空策略 (先删后建)...`);
-          await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${existing.id}`, { method: "DELETE", headers }, 15000);
-          const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
-          kvId = create.result.id;
-        } else {
-          log(`  - 找到同名 KV，执行保留策略...`);
-          kvId = existing.id;
-        }
-      } else {
-        log(`  - 未找到同名 KV，正在新建...`);
-        const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, { method: "POST", headers, body: JSON.stringify({ title: kvName }) }, 15000)).json();
-        if (!create.success) throw new Error(`创建 KV 失败: ${JSON.stringify(create.errors)}`);
-        kvId = create.result.id;
-      }
+      const kvId = await resolveKvNamespaceId(accountId, headers, kvName.trim(), kvAction, (msg) => log(`  - ${msg}`));
       
       // 同步给两个环境绑定 KV（保留原有的其他 KV 绑定）
       kvNamespacesProd[bindName] = { namespace_id: kvId }; 
@@ -1053,25 +1065,17 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
            return;
         }
         
-        // 如果账户原配置存在 install 的 KV 配置，则复用，否则留空以便默认保留原有绑定关系
-        let kvName = "";
-        let kvBinding = "";
-        const installWorker = targetAcc.workers ? targetAcc.workers.find(w => w.name === 'install') : null;
-        if (installWorker) {
-          if (installWorker.kvName) kvName = installWorker.kvName;
-          if (installWorker.kvBinding) kvBinding = installWorker.kvBinding;
-        }
-        
         output.value += '[信息] 匹配账户标识: ' + targetAcc.identifier + '\\n';
         output.value += '[信息] 目标更新项目: install\\n';
         output.scrollTop = output.scrollHeight;
 
+        // 自动更新时直接将 kvBinding 与 kvName 留空，完全复用 install 原有的 KV 及 ENV 绑定
         const payload = {
           accountId: targetAcc.accountId,
           apiToken: targetAcc.token,
-          kvBinding: kvBinding,
-          kvName: kvName,
-          kvAction: 'keep', // KV 保留
+          kvBinding: '',
+          kvName: '',
+          kvAction: 'keep',
           workerName: 'install',
           codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
         };
