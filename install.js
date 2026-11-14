@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.0.202611061700"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.0.202611141340"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -434,21 +434,23 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
       });
     }
 
-    // 3. 提交配置更新（包含两个环境，避免 fail_open 等校验报错）
+    // 3. 提交配置更新（仅提交需要修改的 kv_namespaces 和 env_vars，避免只读字段导致校验失败）
     const updatePayload = {
       deployment_configs: {
-        production: {
-          ...productionConfig,
-          kv_namespaces: kvNamespacesProd,
-          env_vars: envVarsProd
-        },
-        preview: {
-          ...previewConfig,
-          kv_namespaces: kvNamespacesPrev,
-          env_vars: envVarsPrev
-        }
+        production: {},
+        preview: {}
       }
     };
+
+    if (kvName) {
+      updatePayload.deployment_configs.production.kv_namespaces = kvNamespacesProd;
+      updatePayload.deployment_configs.preview.kv_namespaces = kvNamespacesPrev;
+    }
+
+    if (envs && envs.length > 0) {
+      updatePayload.deployment_configs.production.env_vars = envVarsProd;
+      updatePayload.deployment_configs.preview.env_vars = envVarsPrev;
+    }
 
     const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { 
       method: "PATCH", headers, body: JSON.stringify(updatePayload) 
@@ -486,18 +488,24 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
 
     // ================== 核心修改区开始 ==================
     log(`[3/6] 检查项目...`);
-    let actualDomain = `${projectName}.pages.dev`; // 设置默认回退域名
+    let actualDomain = `${projectName}.pages.dev`;
+    let targetBranch = "main"; // 默认分支为 main
     const check = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 30000);
     
     if (check.status === 404) {
       const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`, { method: "POST", headers, body: JSON.stringify({ name: projectName, production_branch: "main" }) }, 30000)).json();
-      if (!create.success) throw new Error(`创建失败`);
-      // 新建项目时，提取 Cloudflare 分配的真实 subdomain
+      if (!create.success) throw new Error(`创建失败: ${JSON.stringify(create.errors)}`);
       if (create.result && create.result.subdomain) actualDomain = create.result.subdomain;
     } else if (check.ok) {
       const projInfo = await check.json();
-      // 获取已存在项目的真实 subdomain
-      if (projInfo.result && projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
+      if (projInfo.result) {
+        if (projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
+        // 读取已存在项目的真实生产分支（兼容 master 等分支名）
+        if (projInfo.result.production_branch) targetBranch = projInfo.result.production_branch;
+      }
+    } else {
+      const errText = await check.text();
+      throw new Error(`检查项目状态异常 (${check.status}): ${errText}`);
     }
     // ================== 核心修改区结束 ==================
 
@@ -521,7 +529,7 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     log(`[6/6] 提交上传...`);
     const form = new FormData();
     form.append("manifest", JSON.stringify(manifest));
-    form.append("branch", "main"); 
+    form.append("branch", targetBranch);
 
     for (const file of files) {
       if (file.path === "_worker.js") continue;
@@ -532,8 +540,9 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
 
     const deployRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}/deployments`, { method: "POST", headers: { "Authorization": `Bearer ${apiToken}` }, body: form }, 60000);
     const deployData = await deployRes.json();
-    if (!deployData.success) throw new Error(`部署失败`);
-
+    if (!deployData.success) {
+      throw new Error(`部署失败: ${JSON.stringify(deployData.errors || deployData)}`);
+    }
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
     // 输出真实的系统分配域名
     log(`[访问] 域名: https://${actualDomain}`); 
