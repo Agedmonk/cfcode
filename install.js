@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.1.202611261738"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.1.202611261739"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -1694,7 +1694,7 @@ function getAccountsPage() {
       <!-- ==================== 第一区：服务器设置（账户组） ==================== -->
       <div class="zone-card">
         <div class="zone-header" data-zone="zone1Body">
-          <div class="zone-title">🖥️ 第一区：服务器设置 <span class="zone-badge" id="zone1Count">0 组</span></div>
+          <div class="zone-title">🖥️ 服务器设置 <span class="zone-badge" id="zone1Count">0 组</span></div>
           <div class="zone-header-right">
             <button id="btnAddAccount" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 添加服务器组</button>
             <span class="zone-arrow">▼</span>
@@ -1708,7 +1708,7 @@ function getAccountsPage() {
       <!-- ==================== 第二区：Worker 项目区 ==================== -->
       <div class="zone-card">
         <div class="zone-header" data-zone="zone2Body">
-          <div class="zone-title">🚀 第二区：Worker 项目区 <span class="zone-badge" id="zone2Count">0 项</span></div>
+          <div class="zone-title">🚀 Worker 项目区 <span class="zone-badge" id="zone2Count">0 项</span></div>
           <div class="zone-header-right">
             <button id="btnAddGlobalWorker" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 新增 Worker 项目</button>
             <span class="zone-arrow">▼</span>
@@ -1722,7 +1722,7 @@ function getAccountsPage() {
       <!-- ==================== 第三区：Pages 项目区 ==================== -->
       <div class="zone-card">
         <div class="zone-header" data-zone="zone3Body">
-          <div class="zone-title">📄 第三区：Pages 项目区 <span class="zone-badge" id="zone3Count">0 项</span></div>
+          <div class="zone-title">📄 Pages 项目区 <span class="zone-badge" id="zone3Count">0 项</span></div>
           <div class="zone-header-right">
             <button id="btnAddGlobalPage" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 新增 Pages 项目</button>
             <span class="zone-arrow">▼</span>
