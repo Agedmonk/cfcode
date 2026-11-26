@@ -16,6 +16,7 @@ on:
       - 'order.js'
       - 'cfnext.js'
       - 'next.js'
+      - 'cfnextpanel.zip'
       - 'version.json'
   workflow_dispatch:
 
