@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.1.202611261725"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.1.202611261738"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -81,7 +81,7 @@ export default {
         return new Response(JSON.stringify({ success: false }), { status: 500 });
       }
     }
-    // 新增：保存全局 Worker / Pages 项目模板列表
+    // 保存全局 Worker / Pages 项目模板列表
     if (path === "/api/projects" && request.method === "POST") {
       return handleSaveGlobalProjects(request, env);
     }
@@ -182,7 +182,6 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
 
   log(`[附加] 正在为 Worker [${workerName}] 绑定自定义域: ${cleanHost}...`);
   try {
-    // 1. 逐级向上剥离主机名，匹配当前账户下对应的 Zone ID
     const parts = cleanHost.split('.');
     let zoneId = null;
     for (let i = 0; i <= parts.length - 2; i++) {
@@ -204,7 +203,6 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
       return;
     }
 
-    // 2. 调用 Worker Custom Domains API 绑定域名
     const domRes = await fetchWithTimeout(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains`,
       {
@@ -304,11 +302,6 @@ async function getStoredData(env) {
 async function getAccountsList(env) {
   const data = await getStoredData(env);
   return data.accounts;
-}
-
-async function findAccountIndex(env, identifier) {
-  const accounts = await getAccountsList(env);
-  return { accounts, idx: accounts.findIndex(a => a.identifier === identifier) };
 }
 
 // ==================== Worker 部署核心 ====================
@@ -418,7 +411,6 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     if (!dep.success) throw new Error(`部署失败: ${JSON.stringify(dep.errors)}`);
     log(`[成功] 部署完成`);
 
-    // 若传入了自定义域名（如 子域名.组域名），则自动绑定自定义域
     if (customDomain && customDomain.trim()) {
       await bindWorkerCustomDomain(accountId, headers, workerName, customDomain.trim(), log);
     }
@@ -1053,7 +1045,7 @@ function getMainPage() {
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
             <h3>📋 常用部署与三区配置说明</h3>
-            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，配置已拆分为三个独立区域，实现项目一次配置、多服务器组复用：</p>
+            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，配置已拆分为三个独立折叠区域，实现项目一次配置、多服务器组复用：</p>
             <pre><code>1. 第一区【服务器设置（账户组）】：
    - 配置组标识、Account ID、API Token、默认组环境变量(ENV)以及【组项目域名】（例如：example.com）。
    - 直接勾选附加第二区和第三区已录入的 Worker / Pages 项目；未附加的项目不会出现在常用部署清单中。
@@ -1064,6 +1056,7 @@ function getMainPage() {
 
 3. 第三区【Pages 项目区】：
    - 全局维护 Pages 项目模板，同样支持为单个项目独立配置专属环境变量(ENV)（可选“保留”或“替换”策略）。
+   - 设为隐藏的项目会自动归类收纳至“隐藏的项目”折叠标签中，点击可展开管理。
 
 ※ 环境变量优先级说明：常用部署时，若在组内勾选了“附加组 ENV”，系统会将组变量与项目独立变量合并；遇到同名变量时，优先使用项目自身的独立 ENV 配置。</code></pre>
           </div>
@@ -1128,7 +1121,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
             <p><strong>cURL 表单格式（使用 Header 鉴权）：</strong></p>
             <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
   -H "Authorization: Bearer 您的系统访问密码" \\
-  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -H "Content-Type": "application/x-www-form-urlencoded" \\
   -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default&customDomain=app.example.com"</code></pre>
             <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
@@ -1384,7 +1377,6 @@ function getDashboardPage() {
     }
     function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text||''; return div.innerHTML; }
     
-    // 获取指定组已附加且有效的 Worker / Pages 项目
     function getGroupAttachedProjects(account, type) {
       if (type === 'worker') {
         const ids = Array.isArray(account.attachedWorkers) ? account.attachedWorkers : [];
@@ -1532,7 +1524,6 @@ function getDashboardPage() {
         const bName = proj.kvBinding ? proj.kvBinding : '(原变量)';
         const kvDisp = proj.kvName ? (bName + ' -> ' + proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')') : '(留空/保留原有关系)';
         
-        // 计算完整自定义域名
         let domainInfo = '';
         if (type === 'worker' && proj.subdomain && account.domain) {
           const fullDomain = proj.subdomain.trim() + '.' + account.domain.trim();
@@ -1551,7 +1542,6 @@ function getDashboardPage() {
       }).join('');
     }
 
-    // 合并组级 ENV 与项目级独立 ENV（同名变量以项目独立 ENV 优先）
     function mergeEnvs(groupEnvs, projectEnvs) {
       const map = new Map();
       (groupEnvs || []).forEach(e => {
@@ -1590,7 +1580,6 @@ function getDashboardPage() {
         output.value += '\\n[' + (i+1) + '/' + selected.length + '] ' + item.account.identifier + ' <- ' + item.proj.name + '\\n';
         output.scrollTop = output.scrollHeight;
         try {
-          // 1. 收集组级别勾选的附加 ENV
           const currentAccIndex = allAccounts.indexOf(item.account);
           const envCb = document.querySelector('.temp-env-cb[data-acc-index="' + currentAccIndex + '"]');
           let groupEnvs = [];
@@ -1603,10 +1592,8 @@ function getDashboardPage() {
             });
           }
 
-          // 2. 合并组 ENV 与项目独立 ENV
           const finalEnvs = mergeEnvs(groupEnvs, item.proj.envs);
 
-          // 3. 计算 Worker 自定义域名（子域名.该组项目域名）
           let customDomain = '';
           if (item.type === 'worker' && item.proj.subdomain && item.proj.subdomain.trim() && item.account.domain && item.account.domain.trim()) {
             customDomain = item.proj.subdomain.trim() + '.' + item.account.domain.trim();
@@ -1641,12 +1628,26 @@ function getAccountsPage() {
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
     .action-bar button { padding: 10px; font-size: 13px; }
     
-    .zone-card { border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 20px; background: #fff; }
-    .zone-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-    .zone-title { font-size: 16px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 6px; }
+    /* 三区折叠卡片样式 */
+    .zone-card { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; background: #fff; overflow: hidden; }
+    .zone-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; background: #fafbfc; cursor: pointer; user-select: none; transition: 0.2s; }
+    .zone-header:hover { background: #f1f2f6; }
+    .zone-title { font-size: 15px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .zone-badge { font-size: 11px; background: #fff7ed; color: var(--primary); border: 1px solid #fed7aa; padding: 2px 8px; border-radius: 99px; font-weight: 500; }
+    .zone-header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .zone-arrow { color: #94a3b8; font-size: 12px; width: 16px; text-align: center; }
+    .zone-body { display: none; padding: 16px 18px; border-top: 1px solid var(--border); background: #fff; }
+    .zone-body.active { display: block; }
+
+    /* 隐藏的项目折叠标签样式 */
+    .hidden-proj-wrapper { margin-top: 12px; border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc; overflow: hidden; }
+    .hidden-proj-header { padding: 8px 12px; font-size: 12px; font-weight: 500; color: #64748b; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: 0.2s; }
+    .hidden-proj-header:hover { background: #f1f5f9; color: #334155; }
+    .hidden-proj-body { display: none; padding: 8px 10px; border-top: 1px dashed #cbd5e1; background: #fff; }
+    .hidden-proj-body.active { display: block; }
 
     .account-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: #fff; overflow: hidden; }
+    .account-item:last-child { margin-bottom: 0; }
     .account-header { background: #fafbfc; padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: 0.2s; }
     .account-header:hover { background: #f1f2f6; }
     .account-header-left { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
@@ -1657,6 +1658,8 @@ function getAccountsPage() {
     .project-list.active { display: block; }
     
     .project-detail { background: #fafbfc; border: 1px solid #eaedf1; padding: 10px 12px; margin: 6px 0; border-radius: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .project-detail:first-child { margin-top: 0; }
+    .project-detail:last-child { margin-bottom: 0; }
     .project-detail-info { flex: 1; min-width: 0; color: #64748b; line-height: 1.5; }
     .project-detail-info b { color: #334155; font-size: 13px; }
     .project-detail-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: 10px; }
@@ -1666,7 +1669,8 @@ function getAccountsPage() {
     .tag-pill.page { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
     .tag-pill.domain { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
 
-    .attach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; max-height: 180px; overflow-y: auto; }
+    .attach-box { background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; max-height: 210px; overflow-y: auto; }
+    .attach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
     .attach-item { display: flex; align-items: center; font-size: 13px; color: #334155; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: #fff; border: 1px solid #eaedf1; }
     .attach-item:hover { border-color: var(--primary); }
 
@@ -1689,33 +1693,48 @@ function getAccountsPage() {
 
       <!-- ==================== 第一区：服务器设置（账户组） ==================== -->
       <div class="zone-card">
-        <div class="zone-header">
-          <div class="zone-title">🖥️ 第一区：服务器设置 <span class="zone-badge">账户组与项目附加</span></div>
-          <button id="btnAddAccount" class="btn-primary" style="padding: 7px 14px; font-size: 13px;">➕ 添加服务器组</button>
+        <div class="zone-header" data-zone="zone1Body">
+          <div class="zone-title">🖥️ 第一区：服务器设置 <span class="zone-badge" id="zone1Count">0 组</span></div>
+          <div class="zone-header-right">
+            <button id="btnAddAccount" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 添加服务器组</button>
+            <span class="zone-arrow">▼</span>
+          </div>
         </div>
-        <div id="accountList"></div>
+        <div id="zone1Body" class="zone-body">
+          <div id="accountList"></div>
+        </div>
       </div>
 
       <!-- ==================== 第二区：Worker 项目区 ==================== -->
       <div class="zone-card">
-        <div class="zone-header">
-          <div class="zone-title">🚀 第二区：Worker 项目区 <span class="zone-badge">全局项目模板</span></div>
-          <button id="btnAddGlobalWorker" class="btn-primary" style="padding: 7px 14px; font-size: 13px;">➕ 新增 Worker 项目</button>
+        <div class="zone-header" data-zone="zone2Body">
+          <div class="zone-title">🚀 第二区：Worker 项目区 <span class="zone-badge" id="zone2Count">0 项</span></div>
+          <div class="zone-header-right">
+            <button id="btnAddGlobalWorker" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 新增 Worker 项目</button>
+            <span class="zone-arrow">▼</span>
+          </div>
         </div>
-        <div id="globalWorkerList"></div>
+        <div id="zone2Body" class="zone-body">
+          <div id="globalWorkerList"></div>
+        </div>
       </div>
 
       <!-- ==================== 第三区：Pages 项目区 ==================== -->
       <div class="zone-card">
-        <div class="zone-header">
-          <div class="zone-title">📄 第三区：Pages 项目区 <span class="zone-badge">全局项目模板</span></div>
-          <button id="btnAddGlobalPage" class="btn-primary" style="padding: 7px 14px; font-size: 13px;">➕ 新增 Pages 项目</button>
+        <div class="zone-header" data-zone="zone3Body">
+          <div class="zone-title">📄 第三区：Pages 项目区 <span class="zone-badge" id="zone3Count">0 项</span></div>
+          <div class="zone-header-right">
+            <button id="btnAddGlobalPage" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 新增 Pages 项目</button>
+            <span class="zone-arrow">▼</span>
+          </div>
         </div>
-        <div id="globalPageList"></div>
+        <div id="zone3Body" class="zone-body">
+          <div id="globalPageList"></div>
+        </div>
       </div>
       
       <!-- 缺省地址前缀模块 -->
-      <div class="zone-card" style="margin-bottom: 0;">
+      <div class="zone-card" style="margin-bottom: 0; padding: 16px 18px;">
         <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">🔗 缺省地址前缀</h3>
         <div style="display:flex; align-items:center; gap:10px;">
            <input type="text" id="sysDefaultPrefix" readonly placeholder="例如: https://raw.githubusercontent.com/用户名/库名/main/" style="background:#f1f5f9; flex:1;">
@@ -1754,12 +1773,12 @@ function getAccountsPage() {
 
       <div class="form-group">
         <label>🚀 附加 Worker 项目（勾选需要在此服务器组部署的项目）</label>
-        <div id="attachWorkerGrid" class="attach-grid"></div>
+        <div id="attachWorkerBox" class="attach-box"></div>
       </div>
 
       <div class="form-group">
         <label>📄 附加 Pages 项目（勾选需要在此服务器组部署的项目）</label>
-        <div id="attachPageGrid" class="attach-grid"></div>
+        <div id="attachPageBox" class="attach-box"></div>
       </div>
 
       <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="editAccountShow" checked> 在常用部署页显示此服务器组</label></div>
@@ -1826,8 +1845,40 @@ function getAccountsPage() {
     let pageProjects = [];
     let sysDefaultPrefix = "";
     let editingIdentifier = null;
-    let editingProjType = 'worker'; // 'worker' or 'page'
+    let editingProjType = 'worker';
     let editingProjId = null;
+
+    // 记录三区以及“隐藏的项目”标签当前的展开状态（默认全部收起）
+    const collapseState = {
+      zone1Body: false,
+      zone2Body: false,
+      zone3Body: false,
+      hiddenWorker: false,
+      hiddenPage: false
+    };
+
+    function setZoneExpanded(zoneId, expanded) {
+      const body = document.getElementById(zoneId);
+      const header = document.querySelector('.zone-header[data-zone="' + zoneId + '"]');
+      if (!body || !header) return;
+      collapseState[zoneId] = expanded;
+      if (expanded) {
+        body.classList.add('active');
+        header.querySelector('.zone-arrow').textContent = '▲';
+      } else {
+        body.classList.remove('active');
+        header.querySelector('.zone-arrow').textContent = '▼';
+      }
+    }
+
+    // 绑定三区标题栏点击展开/收起事件
+    document.querySelectorAll('.zone-header').forEach(header => {
+      header.addEventListener('click', function(e) {
+        if (e.target.closest('button')) return;
+        const zoneId = this.dataset.zone;
+        setZoneExpanded(zoneId, !collapseState[zoneId]);
+      });
+    });
 
     async function loadAccounts() {
       const res = await fetch('/api/accounts');
@@ -1861,6 +1912,9 @@ function getAccountsPage() {
     function moveArrItem(arr, idx, dir) { const t = idx+dir; if(t<0||t>=arr.length) return false; [arr[idx], arr[t]] = [arr[t], arr[idx]]; return true; }
 
     function renderAll() {
+      document.getElementById('zone1Count').textContent = accounts.length + ' 组';
+      document.getElementById('zone2Count').textContent = workerProjects.length + ' 项';
+      document.getElementById('zone3Count').textContent = pageProjects.length + ' 项';
       renderAccounts();
       renderGlobalProjects('worker');
       renderGlobalProjects('page');
@@ -1870,7 +1924,7 @@ function getAccountsPage() {
     function renderAccounts() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
-      if (accounts.length === 0) { container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:15px 0;">暂无服务器组，请点击右上角添加。</p>'; return; }
+      if (accounts.length === 0) { container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:10px 0;">暂无服务器组，请点击右上角添加。</p>'; return; }
       
       accounts.forEach((acc, accIdx) => {
         const div = document.createElement('div'); div.className = 'account-item';
@@ -1917,40 +1971,90 @@ function getAccountsPage() {
       }));
     }
 
-    // ==================== 渲染第二区 & 第三区：全局项目列表 ====================
+    // 构建单条项目 DOM 卡片
+    function buildProjectDetailElement(p, originalIdx, totalLen, type) {
+      const hTag = p.show === false ? '<span style="color:#ef4444">[隐藏]</span> ' : '';
+      const bName = p.kvBinding ? p.kvBinding : '(原变量)';
+      const kvInfo = p.kvName ? ('KV: ' + bName + ' -> ' + p.kvName + (p.kvAction === 'clear' ? '(清)' : '')) : '保留原KV关系';
+      const subInfo = (type === 'worker' && p.subdomain) ? (' | 子域: <span style="color:#10b981;">' + escapeHtml(p.subdomain) + '</span>') : '';
+      const envCount = (p.envs || []).filter(e => e.name).length;
+      const envInfo = envCount > 0 ? (' | 独立ENV: ' + envCount + '项') : '';
+      const uDis = originalIdx === 0 ? 'disabled' : '', dDis = originalIdx === totalLen - 1 ? 'disabled' : '';
+
+      const div = document.createElement('div');
+      div.className = 'project-detail';
+      div.innerHTML = 
+        '<div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b><br>' +
+          '<span style="font-size:11px;">' + escapeHtml(kvInfo) + subInfo + envInfo + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span>' +
+        '</div>' +
+        '<div class="project-detail-actions">' +
+          '<button class="btn-icon p-up" ' + uDis + ' data-type="' + type + '" data-idx="' + originalIdx + '">' + ICONS.up + '</button>' +
+          '<button class="btn-icon p-dn" ' + dDis + ' data-type="' + type + '" data-idx="' + originalIdx + '">' + ICONS.down + '</button>' +
+          '<button class="btn-icon p-edit" data-type="' + type + '" data-id="' + escapeHtml(p.id) + '" style="color:var(--primary)">' + ICONS.edit + '</button>' +
+          '<button class="btn-icon p-del" data-type="' + type + '" data-id="' + escapeHtml(p.id) + '" style="color:#ef4444">' + ICONS.del + '</button>' +
+        '</div>';
+      return div;
+    }
+
+    // ==================== 渲染第二区 & 第三区：全局项目列表（含“隐藏的项目”独立折叠） ====================
     function renderGlobalProjects(type) {
       const list = type === 'worker' ? workerProjects : pageProjects;
       const container = document.getElementById(type === 'worker' ? 'globalWorkerList' : 'globalPageList');
       container.innerHTML = '';
 
       if (!list || list.length === 0) {
-        container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:12px 0;">暂无项目，请点击右上角新增。</p>';
+        container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:10px 0;">暂无项目，请点击右上角新增。</p>';
         return;
       }
 
-      list.forEach((p, i) => {
-        const hTag = p.show === false ? '<span style="color:#ef4444">[隐藏]</span> ' : '';
-        const bName = p.kvBinding ? p.kvBinding : '(原变量)';
-        const kvInfo = p.kvName ? ('KV: ' + bName + ' -> ' + p.kvName + (p.kvAction === 'clear' ? '(清)' : '')) : '保留原KV关系';
-        const subInfo = (type === 'worker' && p.subdomain) ? (' | 子域: <span style="color:#10b981;">' + escapeHtml(p.subdomain) + '</span>') : '';
-        const envCount = (p.envs || []).filter(e => e.name).length;
-        const envInfo = envCount > 0 ? (' | 独立ENV: ' + envCount + '项') : '';
-        const uDis = i === 0 ? 'disabled' : '', dDis = i === list.length - 1 ? 'disabled' : '';
-
-        const div = document.createElement('div');
-        div.className = 'project-detail';
-        div.innerHTML = 
-          '<div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b><br>' +
-            '<span style="font-size:11px;">' + escapeHtml(kvInfo) + subInfo + envInfo + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span>' +
-          '</div>' +
-          '<div class="project-detail-actions">' +
-            '<button class="btn-icon p-up" ' + uDis + ' data-type="' + type + '" data-idx="' + i + '">' + ICONS.up + '</button>' +
-            '<button class="btn-icon p-dn" ' + dDis + ' data-type="' + type + '" data-idx="' + i + '">' + ICONS.down + '</button>' +
-            '<button class="btn-icon p-edit" data-type="' + type + '" data-id="' + escapeHtml(p.id) + '" style="color:var(--primary)">' + ICONS.edit + '</button>' +
-            '<button class="btn-icon p-del" data-type="' + type + '" data-id="' + escapeHtml(p.id) + '" style="color:#ef4444">' + ICONS.del + '</button>' +
-          '</div>';
-        container.appendChild(div);
+      const visibleItems = [];
+      const hiddenItems = [];
+      list.forEach((p, idx) => {
+        if (p.show === false) hiddenItems.push({ p, idx });
+        else visibleItems.push({ p, idx });
       });
+
+      if (visibleItems.length === 0) {
+        const emptyTip = document.createElement('p');
+        emptyTip.style.cssText = 'text-align:center; color:#94a3b8; font-size:12px; margin:6px 0;';
+        emptyTip.textContent = '暂无启用显示的项目';
+        container.appendChild(emptyTip);
+      } else {
+        visibleItems.forEach(({ p, idx }) => {
+          container.appendChild(buildProjectDetailElement(p, idx, list.length, type));
+        });
+      }
+
+      // 若存在隐藏的项目，渲染可点击展开/收起的“隐藏的项目”折叠栏
+      if (hiddenItems.length > 0) {
+        const stateKey = type === 'worker' ? 'hiddenWorker' : 'hiddenPage';
+        const isExpanded = !!collapseState[stateKey];
+
+        const wrap = document.createElement('div');
+        wrap.className = 'hidden-proj-wrapper';
+
+        const header = document.createElement('div');
+        header.className = 'hidden-proj-header';
+        header.innerHTML = '<span>🙈 隐藏的项目 (' + hiddenItems.length + ')</span><span class="h-arrow">' + (isExpanded ? '▲' : '▼') + '</span>';
+
+        const body = document.createElement('div');
+        body.className = 'hidden-proj-body' + (isExpanded ? ' active' : '');
+
+        hiddenItems.forEach(({ p, idx }) => {
+          body.appendChild(buildProjectDetailElement(p, idx, list.length, type));
+        });
+
+        header.addEventListener('click', () => {
+          const next = !body.classList.contains('active');
+          collapseState[stateKey] = next;
+          body.classList.toggle('active', next);
+          header.querySelector('.h-arrow').textContent = next ? '▲' : '▼';
+        });
+
+        wrap.appendChild(header);
+        wrap.appendChild(body);
+        container.appendChild(wrap);
+      }
 
       container.querySelectorAll('.p-up').forEach(b => b.addEventListener('click', async () => {
         const arr = b.dataset.type === 'worker' ? workerProjects : pageProjects;
@@ -2032,7 +2136,7 @@ function getAccountsPage() {
       }; reader.readAsText(file);
     });
 
-    /* 通用 ENV 行构建函数（支持组 ENV 与项目独立 ENV） */
+    /* 通用 ENV 行构建函数 */
     function buildEnvRow(containerId, name='', value='', action='keep') {
       const div = document.createElement('div');
       div.className = 'env-row-item';
@@ -2052,28 +2156,67 @@ function getAccountsPage() {
     document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('accEnvList'); });
     document.getElementById('btnAddProjEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('projEnvList'); });
 
-    /* 渲染服务器组编辑弹窗内的项目勾选框 */
-    function renderAttachGrids(selectedWorkers = [], selectedPages = []) {
-      const wGrid = document.getElementById('attachWorkerGrid');
-      const pGrid = document.getElementById('attachPageGrid');
-      
-      if (workerProjects.length === 0) {
-        wGrid.innerHTML = '<div style="grid-column:1/-1; color:#94a3b8; font-size:12px;">请先在第二区添加 Worker 项目</div>';
-      } else {
-        wGrid.innerHTML = workerProjects.map(w => {
-          const checked = selectedWorkers.includes(w.id) ? 'checked' : '';
-          return '<label class="attach-item"><input type="checkbox" class="att-w-cb" value="' + escapeHtml(w.id) + '" ' + checked + '> ' + escapeHtml(w.name) + '</label>';
-        }).join('');
+    /* 渲染服务器组编辑弹窗内的项目勾选框（同样将隐藏项目归入折叠区） */
+    function renderSingleAttachBox(boxId, list, selectedIds, cbClass, emptyText) {
+      const box = document.getElementById(boxId);
+      box.innerHTML = '';
+      if (!list || list.length === 0) {
+        box.innerHTML = '<div style="color:#94a3b8; font-size:12px;">' + emptyText + '</div>';
+        return;
       }
 
-      if (pageProjects.length === 0) {
-        pGrid.innerHTML = '<div style="grid-column:1/-1; color:#94a3b8; font-size:12px;">请先在第三区添加 Pages 项目</div>';
-      } else {
-        pGrid.innerHTML = pageProjects.map(p => {
-          const checked = selectedPages.includes(p.id) ? 'checked' : '';
-          return '<label class="attach-item"><input type="checkbox" class="att-p-cb" value="' + escapeHtml(p.id) + '" ' + checked + '> ' + escapeHtml(p.name) + '</label>';
+      const visibleList = list.filter(item => item.show !== false);
+      const hiddenList = list.filter(item => item.show === false);
+
+      if (visibleList.length > 0) {
+        const grid = document.createElement('div');
+        grid.className = 'attach-grid';
+        grid.innerHTML = visibleList.map(item => {
+          const checked = selectedIds.includes(item.id) ? 'checked' : '';
+          return '<label class="attach-item"><input type="checkbox" class="' + cbClass + '" value="' + escapeHtml(item.id) + '" ' + checked + '> ' + escapeHtml(item.name) + '</label>';
         }).join('');
+        box.appendChild(grid);
+      } else {
+        const tip = document.createElement('div');
+        tip.style.cssText = 'color:#94a3b8; font-size:12px; margin-bottom:4px;';
+        tip.textContent = '暂无启用显示的项目';
+        box.appendChild(tip);
       }
+
+      if (hiddenList.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'hidden-proj-wrapper';
+        wrap.style.marginTop = visibleList.length > 0 ? '8px' : '0';
+
+        const header = document.createElement('div');
+        header.className = 'hidden-proj-header';
+        header.innerHTML = '<span>🙈 隐藏的项目 (' + hiddenList.length + ')</span><span class="h-arrow">▼</span>';
+
+        const body = document.createElement('div');
+        body.className = 'hidden-proj-body';
+        const hGrid = document.createElement('div');
+        hGrid.className = 'attach-grid';
+        hGrid.innerHTML = hiddenList.map(item => {
+          const checked = selectedIds.includes(item.id) ? 'checked' : '';
+          return '<label class="attach-item"><input type="checkbox" class="' + cbClass + '" value="' + escapeHtml(item.id) + '" ' + checked + '> <span style="color:#94a3b8;">' + escapeHtml(item.name) + '</span></label>';
+        }).join('');
+        body.appendChild(hGrid);
+
+        header.addEventListener('click', () => {
+          const next = !body.classList.contains('active');
+          body.classList.toggle('active', next);
+          header.querySelector('.h-arrow').textContent = next ? '▲' : '▼';
+        });
+
+        wrap.appendChild(header);
+        wrap.appendChild(body);
+        box.appendChild(wrap);
+      }
+    }
+
+    function renderAttachGrids(selectedWorkers = [], selectedPages = []) {
+      renderSingleAttachBox('attachWorkerBox', workerProjects, selectedWorkers, 'att-w-cb', '请先在第二区添加 Worker 项目');
+      renderSingleAttachBox('attachPageBox', pageProjects, selectedPages, 'att-p-cb', '请先在第三区添加 Pages 项目');
     }
 
     /* 第一区：服务器组新增/编辑弹窗 */
@@ -2107,7 +2250,10 @@ function getAccountsPage() {
       document.getElementById('editModal').classList.add('active');
     }
 
-    document.getElementById('btnAddAccount').addEventListener('click', openAddAccount);
+    document.getElementById('btnAddAccount').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAddAccount();
+    });
     document.getElementById('btnCancel').addEventListener('click', () => document.getElementById('editModal').classList.remove('active'));
     
     document.getElementById('btnSave').addEventListener('click', async () => {
@@ -2135,7 +2281,11 @@ function getAccountsPage() {
       };
       
       const data = await (await fetch('/api/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
-      if (data.success) { document.getElementById('editModal').classList.remove('active'); loadAccounts(); } else alert('保存失败');
+      if (data.success) {
+        document.getElementById('editModal').classList.remove('active');
+        setZoneExpanded('zone1Body', true);
+        loadAccounts();
+      } else alert('保存失败');
     });
 
     /* 第二区 & 第三区：全局项目新增/编辑弹窗 */
@@ -2179,8 +2329,14 @@ function getAccountsPage() {
       document.getElementById('projModal').classList.add('active');
     }
 
-    document.getElementById('btnAddGlobalWorker').addEventListener('click', () => openProjModal('worker', null));
-    document.getElementById('btnAddGlobalPage').addEventListener('click', () => openProjModal('page', null));
+    document.getElementById('btnAddGlobalWorker').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openProjModal('worker', null);
+    });
+    document.getElementById('btnAddGlobalPage').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openProjModal('page', null);
+    });
     document.getElementById('btnCancelProj').addEventListener('click', () => document.getElementById('projModal').classList.remove('active'));
 
     document.getElementById('btnSaveProj').addEventListener('click', async () => {
@@ -2219,6 +2375,7 @@ function getAccountsPage() {
       const res = await saveGlobalProjectsToServer();
       if (res.success) {
         document.getElementById('projModal').classList.remove('active');
+        setZoneExpanded(isWorker ? 'zone2Body' : 'zone3Body', true);
         renderAll();
       } else {
         alert('保存失败');
