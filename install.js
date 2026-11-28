@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.2.202611281256"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.3.202611281550"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -168,6 +168,7 @@ async function appendDeployRecord(env, record) {
       envVars: record.envVars || "",
       envValues: record.envValues || "",
       subdomain: record.subdomain || "",
+      customDomains: record.customDomains || "",
       cfDomain: record.cfDomain || "",
       sourceUrl: record.sourceUrl || "",
       triggerSource: record.triggerSource || "单次部署",
@@ -267,9 +268,54 @@ async function getWorkersSubdomain(accountId, headers) {
   return "";
 }
 
-// 配置 Worker 的 workers.dev 域名状态：
-// cfDomain === true  => Production 开启 (enabled: true), Preview 关闭 (previews_enabled: false)
-// cfDomain === false => Production 关闭 (enabled: false), Preview 关闭 (previews_enabled: false)
+// 查询 Worker 已绑定的全部自定义域名（Custom Domains）
+async function fetchWorkerBoundCustomDomains(accountId, headers, workerName) {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains`,
+      { headers },
+      12000
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data.success && Array.isArray(data.result)) {
+      return data.result
+        .filter(d => d.service === workerName && d.hostname)
+        .map(d => `https://${d.hostname}`);
+    }
+  } catch {}
+  return [];
+}
+
+// 查询 Pages 已绑定的全部自定义域名
+async function fetchPagesBoundCustomDomains(accountId, headers, projectName, fallbackDomains = []) {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}/domains`,
+      { headers },
+      12000
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.result)) {
+        const list = data.result
+          .map(d => (typeof d === "string" ? d : d.name))
+          .filter(name => name && !name.endsWith(".pages.dev"))
+          .map(name => (name.startsWith("http") ? name : `https://${name}`));
+        if (list.length > 0) return list;
+      }
+    }
+  } catch {}
+
+  if (Array.isArray(fallbackDomains) && fallbackDomains.length > 0) {
+    return fallbackDomains
+      .filter(name => name && !name.endsWith(".pages.dev"))
+      .map(name => (name.startsWith("http") ? name : `https://${name}`));
+  }
+  return [];
+}
+
+// 配置 Worker 的 workers.dev 域名状态
 async function configureWorkerDevDomain(accountId, headers, workerName, enableCfDomain, log) {
   const payload = enableCfDomain
     ? { enabled: true, previews_enabled: false }
@@ -379,7 +425,7 @@ async function getStoredData(env) {
     let workerProjects = Array.isArray(parsed.workerProjects) ? parsed.workerProjects : [];
     let pageProjects = Array.isArray(parsed.pageProjects) ? parsed.pageProjects : [];
 
-    // 兼容旧版数据结构：如果全局项目表尚未建立，而旧账户内嵌了 workers/pages，自动提取迁移
+    // 兼容旧版数据结构
     const hasLegacy = accounts.some(a => (a.workers && a.workers.length > 0) || (a.pages && a.pages.length > 0));
     if (workerProjects.length === 0 && pageProjects.length === 0 && hasLegacy) {
       const wMap = new Map();
@@ -458,11 +504,11 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
   const logs = [];
   const log = (msg) => logs.push(msg);
   let resolvedCfDomain = "";
-  let resolvedCustomDomain = "";
+  let newlyBoundCustomDomain = "";
   try {
     if (!codeUrl || codeUrl.trim() === "" || codeUrl.trim() === "default") codeUrl = DEFAULT_WORKER_CODE_URL;
     if (!accountId || !apiToken || !workerName) {
-      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400, resolvedSourceUrl: codeUrl };
+      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400, resolvedSourceUrl: codeUrl, cfDomain: "", customDomains: [] };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -566,20 +612,32 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     resolvedCfDomain = await configureWorkerDevDomain(accountId, headers, workerName, !!cfDomain, log);
 
     if (customDomain && customDomain.trim()) {
-      resolvedCustomDomain = await bindWorkerCustomDomain(accountId, headers, workerName, customDomain.trim(), log);
+      newlyBoundCustomDomain = await bindWorkerCustomDomain(accountId, headers, workerName, customDomain.trim(), log);
     }
 
-    const finalCfDomainDisplay = [resolvedCfDomain, resolvedCustomDomain].filter(Boolean).join(" | ");
+    // 获取项目绑定的全部自定义域名
+    const boundCustomDomains = await fetchWorkerBoundCustomDomains(accountId, headers, workerName);
+    if (newlyBoundCustomDomain && !boundCustomDomains.includes(newlyBoundCustomDomain)) {
+      boundCustomDomains.push(newlyBoundCustomDomain);
+    }
+
+    if (boundCustomDomains.length > 0) {
+      log(`[自定义域] 已绑定域名: ${boundCustomDomains.join(', ')}`);
+    } else {
+      log(`[自定义域] 暂无绑定的自定义域名`);
+    }
+
     return {
       success: true,
       logs,
       status: 200,
       resolvedSourceUrl: codeUrl,
-      cfDomain: finalCfDomainDisplay
+      cfDomain: resolvedCfDomain,
+      customDomains: boundCustomDomains
     };
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: codeUrl, cfDomain: "" };
+    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: codeUrl, cfDomain: "", customDomains: [] };
   }
 }
 
@@ -749,10 +807,11 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
   const logs = [];
   const log = (msg) => logs.push(msg);
   let actualDomain = `${projectName}.pages.dev`;
+  let projectDomainsList = [];
   try {
     if (!zipUrl || zipUrl.trim() === "" || zipUrl.trim() === "default") zipUrl = DEFAULT_PAGES_ZIP_URL;
     if (!accountId || !apiToken || !projectName) {
-      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400, resolvedSourceUrl: zipUrl, cfDomain: "" };
+      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400, resolvedSourceUrl: zipUrl, cfDomain: "", customDomains: [] };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -777,6 +836,7 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       if (projInfo.result) {
         if (projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
         if (projInfo.result.production_branch) targetBranch = projInfo.result.production_branch;
+        if (Array.isArray(projInfo.result.domains)) projectDomainsList = projInfo.result.domains;
       }
     } else {
       const errText = await check.text();
@@ -819,7 +879,16 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       throw new Error(`部署失败: ${JSON.stringify(deployData.errors || deployData)}`);
     }
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
-    log(`[访问] 域名: https://${formattedDomain}`);
+    log(`[CF域名] https://${formattedDomain}`);
+
+    // 获取 Pages 项目绑定的全部自定义域名
+    const boundCustomDomains = await fetchPagesBoundCustomDomains(accountId, headers, projectName, projectDomainsList);
+    if (boundCustomDomains.length > 0) {
+      log(`[自定义域] 已绑定域名: ${boundCustomDomains.join(', ')}`);
+    } else {
+      log(`[自定义域] 暂无绑定的自定义域名`);
+    }
+
     return {
       success: true,
       logs,
@@ -827,12 +896,13 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       projectName,
       status: 200,
       resolvedSourceUrl: zipUrl,
-      cfDomain: `https://${formattedDomain}`
+      cfDomain: `https://${formattedDomain}`,
+      customDomains: boundCustomDomains
     };
 
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: zipUrl, cfDomain: "" };
+    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: zipUrl, cfDomain: "", customDomains: [] };
   }
 }
 
@@ -849,7 +919,6 @@ function processSourceUrl(url, prefix) {
   return normPrefix ? (normPrefix + url.trim().replace(/^\/+/, '')) : url.trim();
 }
 
-// 根据 accountId 查找匹配的服务器组配置（用于补全服务器标识及 cfDomain 状态）
 async function findAccountByIdOrIdentifier(env, accountId) {
   const data = await getStoredData(env);
   if (!accountId) return null;
@@ -869,10 +938,10 @@ function summarizeEnvs(envs) {
 async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '', cfDomain = false) {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
-  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "" };
+  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [] };
   if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs, kvBinding, customDomain, !!cfDomain);
   if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs, kvBinding);
-  return { success: false, error: "type 无效", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "" };
+  return { success: false, error: "type 无效", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [] };
 }
 
 async function handleUnifiedDeploy(request, env) {
@@ -926,6 +995,7 @@ async function handleUnifiedDeploy(request, env) {
 
   const envSummary = summarizeEnvs(p.envs);
   const isWorker = String(p.type || "").toLowerCase() === "worker";
+  const boundDomainsStr = Array.isArray(result.customDomains) ? result.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
     status: result.success ? "成功" : "失败",
@@ -937,6 +1007,7 @@ async function handleUnifiedDeploy(request, env) {
     envVars: envSummary.names,
     envValues: envSummary.values,
     subdomain: p.subdomain || (p.customDomain ? p.customDomain.split(".")[0] : ""),
+    customDomains: boundDomainsStr,
     cfDomain: result.cfDomain || "",
     sourceUrl: result.resolvedSourceUrl || p.source || "",
     triggerSource: p.triggerSource || "API调用",
@@ -966,6 +1037,7 @@ async function handleGetDeploy(url, env) {
   const type = q.get("type");
 
   const result = await deployByType(type, accId, q.get("token"), kvName, projName, source, kvAction, [], kvBinding, customDomain, enableCf);
+  const boundDomainsStr = Array.isArray(result.customDomains) ? result.customDomains.join(", ") : "";
 
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
@@ -978,6 +1050,7 @@ async function handleGetDeploy(url, env) {
     envVars: "",
     envValues: "",
     subdomain: customDomain ? customDomain.split(".")[0] : "",
+    customDomains: boundDomainsStr,
     cfDomain: result.cfDomain || "",
     sourceUrl: result.resolvedSourceUrl || source,
     triggerSource: "GET API",
@@ -1000,6 +1073,7 @@ async function handleDeployWorker(request, env) {
   const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '', b.customDomain || '', enableCf);
 
   const envSummary = summarizeEnvs(b.envs || []);
+  const boundDomainsStr = Array.isArray(r.customDomains) ? r.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
     status: r.success ? "成功" : "失败",
@@ -1011,6 +1085,7 @@ async function handleDeployWorker(request, env) {
     envVars: envSummary.names,
     envValues: envSummary.values,
     subdomain: b.customDomain ? b.customDomain.split(".")[0] : "",
+    customDomains: boundDomainsStr,
     cfDomain: r.cfDomain || "",
     sourceUrl: r.resolvedSourceUrl || codeUrl || DEFAULT_WORKER_CODE_URL,
     triggerSource: b.triggerSource || "单次部署",
@@ -1032,6 +1107,7 @@ async function handleDeployPages(request, env) {
   const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '');
 
   const envSummary = summarizeEnvs(b.envs || []);
+  const boundDomainsStr = Array.isArray(r.customDomains) ? r.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
     status: r.success ? "成功" : "失败",
@@ -1043,6 +1119,7 @@ async function handleDeployPages(request, env) {
     envVars: envSummary.names,
     envValues: envSummary.values,
     subdomain: "",
+    customDomains: boundDomainsStr,
     cfDomain: r.cfDomain || (b.projectName ? `https://${b.projectName}.pages.dev` : ""),
     sourceUrl: r.resolvedSourceUrl || zipUrl || DEFAULT_PAGES_ZIP_URL,
     triggerSource: b.triggerSource || "单次部署",
@@ -1301,7 +1378,7 @@ function getMainPage() {
     .accordion-content.active { display: block; }
     button.action-btn { width: 100%; padding: 12px; margin-top: 10px; }
 
-    .cf-monitor-bar { display: none; margin-bottom: 8px; padding: 8px 12px; border-radius: 6px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.5; word-break: break-all; }
+    .cf-monitor-bar { display: none; margin-bottom: 8px; padding: 8px 12px; border-radius: 6px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.6; word-break: break-all; }
     .cf-monitor-bar.active { display: block; }
 
     pre { background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
@@ -1374,8 +1451,8 @@ function getMainPage() {
             <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，支持多服务器组与全局项目复用：</p>
             <pre><code>1. 第一区【服务器设置（账户组）】：
    - 配置组标识、Account ID、API Token、默认组环境变量(ENV)以及【组项目域名】（例如：example.com）。
-   - 每个服务器组内均配有【CF域名】可选框：勾选后开启 CF 提供的 workers.dev 域名（Production 开启、Preview 关闭）；取消勾选则关闭 workers.dev 域名（Production 与 Preview 均关闭）。若开启了 CF域名，部署时会在监视窗口中显示。
-   - 勾选附加第二区和第三区已录入的 Worker / Pages 项目；未附加的项目不会出现在常用部署清单中。
+   - 每个服务器组内均配有【CF域名】可选框：勾选后开启 CF 提供的 workers.dev 域名（Production 开启、Preview 关闭）；取消勾选则关闭 workers.dev 域名（Production 与 Preview 均关闭）。
+   - 部署时，若开启了 CF域名或项目绑定了自定义域名，均会在监视窗口中实时显示并写入部署记录。
 
 2. 第二区【Worker 项目区】：
    - 全局维护 Worker 项目模板，支持配置 KV变量、KV仓库及保留/清空策略、独立环境变量(ENV)及【自定义子域名】。
@@ -1387,11 +1464,11 @@ function getMainPage() {
 
 4. 【缺省地址前缀】与【部署记录】：
    - 缺省地址前缀采用下拉列表展示，右侧设有“设置”按钮，可进行新增、编辑、删除与排序；默认处于收缩状态，点击展开，再点收回。新增或保存前缀时，若末尾不是 "/" 会自动补充。
-   - 每次部署均会自动保存至【部署记录】（/records），记录部署时间、部署状态、服务器、部署方式（Worker/Pages）、项目名称、KV变量、KV仓库、ENV变量、ENV值、子域名（如有）、CF域名、项目来源、耗时与日志。</code></pre>
+   - 每次部署均会自动保存至【部署记录】（/records），记录部署时间、部署状态、服务器、部署方式（Worker/Pages）、项目名称、KV变量、KV仓库、ENV变量、ENV值、子域名（如有）、自定义域名（如有）、CF域名、项目来源、耗时与日志。</code></pre>
           </div>
           <div class="info-section">
             <h3>🌐 单次页面部署</h3>
-            <p>填写 Account ID、API Token、KV变量（可选）、KV仓库（可选）和项目名称，展开对应部署面板（Worker 可选填自定义域与 CF域名 开关）后点击部署，部署结果与日志将输出至监视窗口并写入部署记录。</p>
+            <p>填写 Account ID、API Token、KV变量（可选）、KV仓库（可选）和项目名称，展开对应部署面板（Worker 可选填自定义域与 CF域名 开关）后点击部署，部署结果、已绑定的自定义域名与日志将输出至监视窗口并写入部署记录。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
@@ -1580,13 +1657,19 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         if (!isActive) { target.classList.add('active'); this.querySelector('.arrow').textContent = '▲'; }
       }));
 
-      function updateCfMonitor(enabled, cfDomainStr) {
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+      }
+
+      function updateMonitorBanner(lines) {
         const bar = document.getElementById('cfDomainMonitor');
-        if (enabled && cfDomainStr) {
-          bar.textContent = '🌐 CF域名已开启（Production 开启 / Preview 关闭）：' + cfDomainStr;
+        if (lines && lines.length > 0) {
+          bar.innerHTML = lines.map(escapeHtml).join('<br>');
           bar.classList.add('active');
         } else {
-          bar.textContent = '';
+          bar.innerHTML = '';
           bar.classList.remove('active');
         }
       }
@@ -1613,7 +1696,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           });
         }
 
-        updateCfMonitor(false, '');
+        updateMonitorBanner([]);
         const output = document.getElementById('logOutput');
         output.value = '部署中...\\n'; output.scrollTop = output.scrollHeight;
 
@@ -1627,9 +1710,18 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const data = await res.json();
         output.value = (data.logs || []).join('\\n'); output.scrollTop = output.scrollHeight;
 
-        if (type === 'worker' && enableCfDomain && data.success) {
-          updateCfMonitor(true, data.cfDomain || (name + '.workers.dev'));
+        const monitorLines = [];
+        if (data.success) {
+          if (type === 'worker' && enableCfDomain && data.cfDomain) {
+            monitorLines.push('🌐 CF域名已开启（Production 开启 / Preview 关闭）：' + data.cfDomain);
+          } else if (type === 'pages' && data.cfDomain) {
+            monitorLines.push('🌐 Pages 域名：' + data.cfDomain);
+          }
+          if (Array.isArray(data.customDomains) && data.customDomains.length > 0) {
+            monitorLines.push('🔗 已绑定自定义域名：' + data.customDomains.join(', '));
+          }
         }
+        updateMonitorBanner(monitorLines);
       }
       document.getElementById('btnDeployWorker').addEventListener('click', () => runDeploy('worker'));
       document.getElementById('btnDeployPages').addEventListener('click', () => runDeploy('pages'));
@@ -1667,7 +1759,7 @@ function getDashboardPage() {
     .temp-deploy-block { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; align-items: center; }
     .temp-cb-wrap { font-size: 13px; font-weight: 500; color: #475569; display: flex; align-items: center; }
 
-    .cf-monitor-box { display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.6; }
+    .cf-monitor-box { display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.6; word-break: break-all; }
     .cf-monitor-box.active { display: block; }
 
     .deploy-btn { width: 100%; padding: 12px; font-size: 15px; margin-top: 15px; }
@@ -1913,7 +2005,7 @@ function getDashboardPage() {
 
       btn.disabled = true; output.value = '开始批量部署...\\n';
       cfBox.innerHTML = ''; cfBox.classList.remove('active');
-      const enabledCfItems = [];
+      const monitorSummaryItems = [];
 
       for (let i = 0; i < selected.length; i++) {
         const item = selected[i];
@@ -1956,15 +2048,24 @@ function getDashboardPage() {
           const data = await res.json();
           output.value += (data.logs || []).join('\\n') + '\\n';
 
-          if (item.type === 'worker' && accCfEnabled && data.success) {
-            enabledCfItems.push('[' + item.account.identifier + '] ' + item.proj.name + (data.cfDomain ? ' -> ' + data.cfDomain : ''));
+          if (data.success) {
+            const parts = [];
+            if (item.type === 'worker' && accCfEnabled && data.cfDomain) {
+              parts.push('CF域名: ' + data.cfDomain);
+            }
+            if (Array.isArray(data.customDomains) && data.customDomains.length > 0) {
+              parts.push('自定义域名: ' + data.customDomains.join(', '));
+            }
+            if (parts.length > 0) {
+              monitorSummaryItems.push('[' + item.account.identifier + '] ' + item.proj.name + ' -> ' + parts.join(' | '));
+            }
           }
         } catch (e) { output.value += '[错误] ' + e.message + '\\n'; }
         output.scrollTop = output.scrollHeight;
       }
 
-      if (enabledCfItems.length > 0) {
-        cfBox.innerHTML = '<b>🌐 已开启 CF域名（workers.dev：Production 开启 / Preview 关闭）：</b><br>' + enabledCfItems.map(escapeHtml).join('<br>');
+      if (monitorSummaryItems.length > 0) {
+        cfBox.innerHTML = '<b>🌐 域名状态汇总（CF域名 / 已绑定自定义域名）：</b><br>' + monitorSummaryItems.map(escapeHtml).join('<br>');
         cfBox.classList.add('active');
       }
 
@@ -2246,7 +2347,6 @@ function getAccountsPage() {
     let editingProjType = 'worker';
     let editingProjId = null;
 
-    // 默认全部收缩（先收缩，点击展开，再点收回）
     const collapseState = {
       zone1Body: false,
       zone2Body: false,
@@ -2916,7 +3016,7 @@ function getRecordsPage() {
     .filter-group { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
     .filter-group input, .filter-group select { width: auto; min-width: 130px; padding: 8px 12px; }
     .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1120px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1220px; }
     th, td { padding: 10px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: top; word-break: break-all; }
     th { background: #f8fafc; color: #334155; font-weight: 600; white-space: nowrap; }
     tr:hover td { background: #fafbfc; }
@@ -2928,7 +3028,7 @@ function getRecordsPage() {
     .log-btn { padding: 4px 8px; font-size: 11px; background: #f1f5f9; color: #334155; border-radius: 5px; white-space: nowrap; }
     .log-btn:hover { background: #e2e8f0; }
   </style></head><body>
-  <div class="container" style="max-width: 1200px;">
+  <div class="container" style="max-width: 1280px;">
     <div class="card">
       <h2>📜 部署记录</h2>
 
@@ -2966,6 +3066,7 @@ function getRecordsPage() {
               <th>ENV变量</th>
               <th>ENV值</th>
               <th>子域名</th>
+              <th>自定义域名</th>
               <th>CF域名</th>
               <th>项目来源</th>
               <th>耗时/来源</th>
@@ -2973,7 +3074,7 @@ function getRecordsPage() {
             </tr>
           </thead>
           <tbody id="recordsTbody">
-            <tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:24px;">加载中...</td></tr>
+            <tr><td colspan="15" style="text-align:center; color:#94a3b8; padding:24px;">加载中...</td></tr>
           </tbody>
         </table>
       </div>
@@ -3013,7 +3114,7 @@ function getRecordsPage() {
         allRecords = data.records || [];
         renderRecords();
       } else {
-        document.getElementById('recordsTbody').innerHTML = '<tr><td colspan="14" style="text-align:center; color:#ef4444; padding:20px;">加载失败</td></tr>';
+        document.getElementById('recordsTbody').innerHTML = '<tr><td colspan="15" style="text-align:center; color:#ef4444; padding:20px;">加载失败</td></tr>';
       }
     }
 
@@ -3029,7 +3130,7 @@ function getRecordsPage() {
           const hay = [
             r.time, r.status, r.server, r.method, r.projectName,
             r.kvVar, r.kvRepo, r.envVars, r.envValues, r.subdomain,
-            r.cfDomain, r.sourceUrl, r.triggerSource
+            r.customDomains, r.cfDomain, r.sourceUrl, r.triggerSource
           ].join(' ').toLowerCase();
           if (!hay.includes(kw)) return false;
         }
@@ -3038,7 +3139,7 @@ function getRecordsPage() {
 
       const tbody = document.getElementById('recordsTbody');
       if (!filtered.length) {
-        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:24px;">暂无部署记录</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; color:#94a3b8; padding:24px;">暂无部署记录</td></tr>';
         return;
       }
 
@@ -3062,6 +3163,7 @@ function getRecordsPage() {
           '<td>' + escapeHtml(r.envVars || '-') + '</td>' +
           '<td>' + escapeHtml(r.envValues || '-') + '</td>' +
           '<td>' + escapeHtml(r.subdomain || '-') + '</td>' +
+          '<td>' + escapeHtml(r.customDomains || '-') + '</td>' +
           '<td>' + escapeHtml(r.cfDomain || '-') + '</td>' +
           '<td>' + escapeHtml(r.sourceUrl || '-') + '</td>' +
           '<td>' + escapeHtml(metaExtra || '-') + '</td>' +
