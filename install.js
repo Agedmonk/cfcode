@@ -1,23 +1,23 @@
-const CURRENT_VERSION = "1.1.202611261739"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.2.202611281256"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-    const PASSWORD = ''; // 输入自定义密码	
-	
+    const PASSWORD = ''; // 输入自定义密码
+
     // ==================== 登录鉴权拦截 ====================
     const expectedPassword = env.PASSWORD || PASSWORD; // 从 CF 环境变量读取密码或使用自定义密码
     if (expectedPassword) {
       const cookies = request.headers.get("Cookie") || "";
       const authHeader = request.headers.get("Authorization") || "";
       const queryPwd = url.searchParams.get("pwd");
-      
-      const isAuthed = 
-        cookies.includes(`cf_auth=${expectedPassword}`) || 
+
+      const isAuthed =
+        cookies.includes(`cf_auth=${expectedPassword}`) ||
         authHeader === `Bearer ${expectedPassword}` ||
         queryPwd === expectedPassword;
-      
+
       // 处理登录表单提交
       if (path === "/login" && request.method === "POST") {
         const formData = await request.formData().catch(() => new FormData());
@@ -48,15 +48,15 @@ export default {
       // 未授权情况拦截
       if (!isAuthed) {
         if (path.startsWith("/api/")) {
-          return new Response(JSON.stringify({ success: false, error: "未授权，请提供正确的密码或登录" }), { 
-            status: 401, headers: { "Content-Type": "application/json" } 
+          return new Response(JSON.stringify({ success: false, error: "未授权，请提供正确的密码或登录" }), {
+            status: 401, headers: { "Content-Type": "application/json" }
           });
         }
         return new Response(getLoginPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
       }
     }
     // ======================================================
-	
+
     // API 路由
     if (path === "/api/deploy") {
       if (request.method === "POST") return handleUnifiedDeploy(request, env);
@@ -65,7 +65,13 @@ export default {
     if (path === "/api/deploy-worker" && request.method === "POST") return handleDeployWorker(request, env);
     if (path === "/api/deploy-pages" && request.method === "POST") return handleDeployPages(request, env);
     if (path === "/api/config" && request.method === "POST") return handleSaveConfig(request, env);
-    
+
+    // === 部署记录 API ===
+    if (path === "/api/records") {
+      if (request.method === "GET") return handleGetRecords(env);
+      if (request.method === "DELETE") return handleClearRecords(env);
+    }
+
     // === 账户与三区配置 API ===
     if (path === "/api/accounts") {
       if (request.method === "GET") return handleGetAccounts(env);
@@ -77,7 +83,7 @@ export default {
         const body = await request.json();
         await saveAccountsList(env, body.accounts);
         return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
-      } catch(e) {
+      } catch (e) {
         return new Response(JSON.stringify({ success: false }), { status: 500 });
       }
     }
@@ -99,6 +105,7 @@ export default {
     if (path === "/" || path === "/index.html") return new Response(getMainPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/dashboard") return new Response(getDashboardPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/accounts") return new Response(getAccountsPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+    if (path === "/records") return new Response(getRecordsPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 
     return new Response(getMainPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
   },
@@ -108,8 +115,22 @@ export default {
 const DEFAULT_WORKER_CODE_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js";
 const DEFAULT_PAGES_ZIP_URL = "https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip";
 const ACCOUNTS_KEY = "accounts";
+const DEPLOY_RECORDS_KEY = "deploy_records";
+const MAX_DEPLOY_RECORDS = 200;
 
 // ==================== 工具函数 ====================
+function formatBeijingTime(date = new Date()) {
+  const d = new Date(date.getTime() + 8 * 3600000);
+  const pad = n => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+function normalizePrefixSlash(prefix) {
+  const s = String(prefix || "").trim();
+  if (!s) return "";
+  return s.endsWith("/") ? s : `${s}/`;
+}
+
 async function fetchWithTimeout(url, options = {}, timeout = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -117,6 +138,63 @@ async function fetchWithTimeout(url, options = {}, timeout = 15000) {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// ==================== 部署记录存储函数 ====================
+async function getDeployRecords(env) {
+  try {
+    const raw = await env.KV.get(DEPLOY_RECORDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function appendDeployRecord(env, record) {
+  try {
+    const records = await getDeployRecords(env);
+    const entry = {
+      id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      time: record.time || formatBeijingTime(),
+      status: record.status || "成功",
+      server: record.server || "",
+      method: record.method || "Worker",
+      projectName: record.projectName || "",
+      kvVar: record.kvVar || "",
+      kvRepo: record.kvRepo || "",
+      envVars: record.envVars || "",
+      envValues: record.envValues || "",
+      subdomain: record.subdomain || "",
+      cfDomain: record.cfDomain || "",
+      sourceUrl: record.sourceUrl || "",
+      triggerSource: record.triggerSource || "单次部署",
+      duration: record.duration || "",
+      logs: Array.isArray(record.logs) ? record.logs.slice(-120) : []
+    };
+    records.unshift(entry);
+    if (records.length > MAX_DEPLOY_RECORDS) {
+      records.length = MAX_DEPLOY_RECORDS;
+    }
+    await env.KV.put(DEPLOY_RECORDS_KEY, JSON.stringify(records));
+  } catch (e) {
+    console.error("保存部署记录失败:", e);
+  }
+}
+
+async function handleGetRecords(env) {
+  const records = await getDeployRecords(env);
+  return new Response(JSON.stringify({ success: true, records }), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleClearRecords(env) {
+  try {
+    await env.KV.put(DEPLOY_RECORDS_KEY, JSON.stringify([]));
+    return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
   }
 }
 
@@ -172,12 +250,69 @@ async function resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, 
   }
 }
 
+// 获取账户的 workers.dev 子域名（若存在）
+async function getWorkersSubdomain(accountId, headers) {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
+      { headers },
+      10000
+    );
+    if (!res.ok) return "";
+    const data = await res.json();
+    if (data.success && data.result && data.result.subdomain) {
+      return `${data.result.subdomain}.workers.dev`;
+    }
+  } catch {}
+  return "";
+}
+
+// 配置 Worker 的 workers.dev 域名状态：
+// cfDomain === true  => Production 开启 (enabled: true), Preview 关闭 (previews_enabled: false)
+// cfDomain === false => Production 关闭 (enabled: false), Preview 关闭 (previews_enabled: false)
+async function configureWorkerDevDomain(accountId, headers, workerName, enableCfDomain, log) {
+  const payload = enableCfDomain
+    ? { enabled: true, previews_enabled: false }
+    : { enabled: false, previews_enabled: false };
+
+  log(`[CF域名] 正在${enableCfDomain ? '开启' : '关闭'} Worker [${workerName}] 的 workers.dev (Production: ${enableCfDomain ? '开启' : '关闭'}, Preview: 关闭)...`);
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/subdomain`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      },
+      15000
+    );
+    const data = await res.json();
+    if (data.success) {
+      const subHost = await getWorkersSubdomain(accountId, headers);
+      const cfUrl = subHost ? `https://${workerName}.${subHost}` : `${workerName}.workers.dev`;
+      if (enableCfDomain) {
+        log(`[CF域名][已开启] workers.dev (Production: 开启, Preview: 关闭) -> ${cfUrl}`);
+        return cfUrl;
+      } else {
+        log(`[CF域名][已关闭] workers.dev (Production: 关闭, Preview: 关闭)`);
+        return "";
+      }
+    } else {
+      log(`[警告] 设置 workers.dev 状态失败: ${JSON.stringify(data.errors)}`);
+      return enableCfDomain ? `${workerName}.workers.dev` : "";
+    }
+  } catch (err) {
+    log(`[警告] 设置 workers.dev 状态异常: ${err.message}`);
+    return enableCfDomain ? `${workerName}.workers.dev` : "";
+  }
+}
+
 // 绑定 Worker 自定义域名（Custom Domains）
 async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, log) {
   const cleanHost = hostname.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
   if (!cleanHost || !cleanHost.includes('.')) {
     log(`[警告] 自定义域名格式无效 (${hostname})，跳过绑定`);
-    return;
+    return "";
   }
 
   log(`[附加] 正在为 Worker [${workerName}] 绑定自定义域: ${cleanHost}...`);
@@ -200,7 +335,7 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
 
     if (!zoneId) {
       log(`[警告] 未在当前账户下找到域名 [${cleanHost}] 对应的 Zone，请确认域名已托管在 Cloudflare`);
-      return;
+      return "";
     }
 
     const domRes = await fetchWithTimeout(
@@ -220,11 +355,14 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
     const domData = await domRes.json();
     if (domData.success) {
       log(`[成功] 自定义域已绑定: https://${cleanHost}`);
+      return `https://${cleanHost}`;
     } else {
       log(`[警告] 自定义域绑定失败: ${JSON.stringify(domData.errors)}`);
+      return "";
     }
   } catch (err) {
     log(`[警告] 自定义域绑定异常: ${err.message}`);
+    return "";
   }
 }
 
@@ -232,9 +370,12 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
 async function getStoredData(env) {
   try {
     const raw = await env.KV.get(ACCOUNTS_KEY);
-    if (!raw) return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "" };
+    if (!raw) return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "", prefixes: [] };
     const parsed = JSON.parse(raw);
-    let accounts = parsed.accounts || [];
+    let accounts = (parsed.accounts || []).map(a => ({
+      ...a,
+      cfDomain: a.cfDomain === true
+    }));
     let workerProjects = Array.isArray(parsed.workerProjects) ? parsed.workerProjects : [];
     let pageProjects = Array.isArray(parsed.pageProjects) ? parsed.pageProjects : [];
 
@@ -247,7 +388,7 @@ async function getStoredData(env) {
         if (!Array.isArray(acc.attachedWorkers)) acc.attachedWorkers = [];
         if (!Array.isArray(acc.attachedPages)) acc.attachedPages = [];
         (acc.workers || []).forEach((w, idx) => {
-          const key = `${w.name}|${w.kvBinding||''}|${w.kvName||''}|${w.codeUrl||''}`;
+          const key = `${w.name}|${w.kvBinding || ''}|${w.kvName || ''}|${w.codeUrl || ''}`;
           let id = wMap.get(key);
           if (!id) {
             id = `w_mig_${Date.now()}_${wMap.size}_${idx}`;
@@ -267,7 +408,7 @@ async function getStoredData(env) {
           if (!acc.attachedWorkers.includes(id)) acc.attachedWorkers.push(id);
         });
         (acc.pages || []).forEach((p, idx) => {
-          const key = `${p.name}|${p.kvBinding||''}|${p.kvName||''}|${p.codeUrl||''}`;
+          const key = `${p.name}|${p.kvBinding || ''}|${p.kvName || ''}|${p.codeUrl || ''}`;
           let id = pMap.get(key);
           if (!id) {
             id = `p_mig_${Date.now()}_${pMap.size}_${idx}`;
@@ -288,14 +429,22 @@ async function getStoredData(env) {
       });
     }
 
+    const defPref = normalizePrefixSlash(parsed.defaultPrefix || "");
+    let prefixes = Array.isArray(parsed.prefixes) ? parsed.prefixes.map(normalizePrefixSlash).filter(Boolean) : [];
+    if (defPref && !prefixes.includes(defPref)) {
+      prefixes.unshift(defPref);
+    }
+    const activePrefix = defPref || (prefixes[0] || "");
+
     return {
       accounts,
       workerProjects,
       pageProjects,
-      defaultPrefix: parsed.defaultPrefix || ""
+      defaultPrefix: activePrefix,
+      prefixes
     };
   } catch {
-    return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "" };
+    return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "", prefixes: [] };
   }
 }
 
@@ -305,13 +454,15 @@ async function getAccountsList(env) {
 }
 
 // ==================== Worker 部署核心 ====================
-async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '') {
+async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '', cfDomain = false) {
   const logs = [];
   const log = (msg) => logs.push(msg);
+  let resolvedCfDomain = "";
+  let resolvedCustomDomain = "";
   try {
     if (!codeUrl || codeUrl.trim() === "" || codeUrl.trim() === "default") codeUrl = DEFAULT_WORKER_CODE_URL;
     if (!accountId || !apiToken || !workerName) {
-      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400 };
+      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400, resolvedSourceUrl: codeUrl };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -327,8 +478,8 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     log(`[2/4] 检查并处理原有配置(KV/ENV)...`);
     try {
       const get = await fetchWithTimeout(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`, 
-        { headers }, 
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/bindings`,
+        { headers },
         15000
       );
       if (get.ok) {
@@ -363,7 +514,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
         bindName = existingKvBinding ? existingKvBinding.name : "KV";
       }
 
-      log(`[提示] 正在配置 KV 命名空间 [${targetKvName}] (绑定变量名: ${bindName})...`);
+      log(`[提示] 正在配置 KV 仓库 [${targetKvName}] (KV变量: ${bindName})...`);
       const kvId = await resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, log);
 
       const newKvBindingObj = { type: "kv_namespace", name: bindName, namespace_id: kvId };
@@ -373,9 +524,9 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       } else {
         bindings.push(newKvBindingObj);
       }
-      log(`[成功] KV 绑定配置完成 (变量名: ${bindName}, ID: ${kvId})`);
+      log(`[成功] KV 绑定配置完成 (KV变量: ${bindName}, ID: ${kvId})`);
     } else {
-      log(`[提示] 未指定新 KV，保留原有 KV 绑定关系`);
+      log(`[提示] 未指定新 KV仓库，保留原有 KV 绑定关系`);
     }
 
     log(`[3/4] 处理附加环境变量 (ENV)...`);
@@ -411,14 +562,24 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
     if (!dep.success) throw new Error(`部署失败: ${JSON.stringify(dep.errors)}`);
     log(`[成功] 部署完成`);
 
+    // 配置 CF workers.dev 域名开关
+    resolvedCfDomain = await configureWorkerDevDomain(accountId, headers, workerName, !!cfDomain, log);
+
     if (customDomain && customDomain.trim()) {
-      await bindWorkerCustomDomain(accountId, headers, workerName, customDomain.trim(), log);
+      resolvedCustomDomain = await bindWorkerCustomDomain(accountId, headers, workerName, customDomain.trim(), log);
     }
 
-    return { success: true, logs, status: 200 };
+    const finalCfDomainDisplay = [resolvedCfDomain, resolvedCustomDomain].filter(Boolean).join(" | ");
+    return {
+      success: true,
+      logs,
+      status: 200,
+      resolvedSourceUrl: codeUrl,
+      cfDomain: finalCfDomainDisplay
+    };
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500 };
+    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: codeUrl, cfDomain: "" };
   }
 }
 
@@ -514,13 +675,13 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
     const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
     if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
     const projData = await projRes.json();
-    
+
     let productionConfig = projData.result?.deployment_configs?.production || {};
     let previewConfig = projData.result?.deployment_configs?.preview || {};
 
     let kvNamespacesProd = productionConfig.kv_namespaces || {};
     let kvNamespacesPrev = previewConfig.kv_namespaces || {};
-    
+
     let envVarsProd = productionConfig.env_vars || {};
     let envVarsPrev = previewConfig.env_vars || {};
 
@@ -532,10 +693,10 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
       }
 
       const kvId = await resolveKvNamespaceId(accountId, headers, kvName.trim(), kvAction, (msg) => log(`  - ${msg}`));
-      
-      kvNamespacesProd[bindName] = { namespace_id: kvId }; 
-      kvNamespacesPrev[bindName] = { namespace_id: kvId }; 
-      log(`  - KV 绑定就绪 (变量名: ${bindName}, ID: ${kvId})`);
+
+      kvNamespacesProd[bindName] = { namespace_id: kvId };
+      kvNamespacesPrev[bindName] = { namespace_id: kvId };
+      log(`  - KV 绑定就绪 (KV变量: ${bindName}, ID: ${kvId})`);
     }
 
     if (envs && envs.length > 0) {
@@ -568,10 +729,10 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
       updatePayload.deployment_configs.preview.env_vars = envVarsPrev;
     }
 
-    const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { 
-      method: "PATCH", headers, body: JSON.stringify(updatePayload) 
+    const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, {
+      method: "PATCH", headers, body: JSON.stringify(updatePayload)
     }, 15000);
-    
+
     if (!updateRes.ok) {
       const err = await updateRes.json();
       throw new Error(`更新项目配置失败: ${JSON.stringify(err.errors)}`);
@@ -587,10 +748,11 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
 async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl, kvAction = 'keep', envs = [], kvBinding = '') {
   const logs = [];
   const log = (msg) => logs.push(msg);
+  let actualDomain = `${projectName}.pages.dev`;
   try {
     if (!zipUrl || zipUrl.trim() === "" || zipUrl.trim() === "default") zipUrl = DEFAULT_PAGES_ZIP_URL;
     if (!accountId || !apiToken || !projectName) {
-      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400 };
+      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400, resolvedSourceUrl: zipUrl, cfDomain: "" };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -603,10 +765,9 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     const files = await extractZip(zipBuf);
 
     log(`[3/6] 检查项目...`);
-    let actualDomain = `${projectName}.pages.dev`;
     let targetBranch = "main";
     const check = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 30000);
-    
+
     if (check.status === 404) {
       const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`, { method: "POST", headers, body: JSON.stringify({ name: projectName, production_branch: "main" }) }, 30000)).json();
       if (!create.success) throw new Error(`创建失败: ${JSON.stringify(create.errors)}`);
@@ -621,6 +782,8 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       const errText = await check.text();
       throw new Error(`检查项目状态异常 (${check.status}): ${errText}`);
     }
+
+    const formattedDomain = actualDomain.includes(".pages.dev") ? actualDomain : `${actualDomain}.pages.dev`;
 
     if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
       log(`[4/6] 更新项目配置(KV/ENV)...`);
@@ -656,100 +819,237 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       throw new Error(`部署失败: ${JSON.stringify(deployData.errors || deployData)}`);
     }
     log(`[成功] 部署完毕 ID: ${deployData.result.id}`);
-    log(`[访问] 域名: https://${actualDomain}`); 
-    return { success: true, logs, deploymentId: deployData.result.id, projectName, status: 200 };
-    
+    log(`[访问] 域名: https://${formattedDomain}`);
+    return {
+      success: true,
+      logs,
+      deploymentId: deployData.result.id,
+      projectName,
+      status: 200,
+      resolvedSourceUrl: zipUrl,
+      cfDomain: `https://${formattedDomain}`
+    };
+
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500 };
+    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: zipUrl, cfDomain: "" };
   }
 }
 
 // ==================== 缺省前缀辅助函数 ====================
 async function getSystemPrefix(env) {
-  try {
-    const raw = await env.KV.get(ACCOUNTS_KEY);
-    return raw ? (JSON.parse(raw).defaultPrefix || "") : "";
-  } catch { return ""; }
+  const data = await getStoredData(env);
+  return data.defaultPrefix || "";
 }
 
 function processSourceUrl(url, prefix) {
   if (!url || url.trim() === "" || url.trim() === "default") return url;
-  if (url.toLowerCase().startsWith('http://') || url.toLowerCase().startsWith('https://')) return url;
-  return prefix ? (prefix + url.trim()) : url.trim();
+  if (url.toLowerCase().startsWith('http://') || url.toLowerCase().startsWith('https://')) return url.trim();
+  const normPrefix = normalizePrefixSlash(prefix);
+  return normPrefix ? (normPrefix + url.trim().replace(/^\/+/, '')) : url.trim();
+}
+
+// 根据 accountId 查找匹配的服务器组配置（用于补全服务器标识及 cfDomain 状态）
+async function findAccountByIdOrIdentifier(env, accountId) {
+  const data = await getStoredData(env);
+  if (!accountId) return null;
+  return data.accounts.find(a => a.accountId === accountId || a.identifier === accountId) || null;
+}
+
+function summarizeEnvs(envs) {
+  if (!Array.isArray(envs) || envs.length === 0) return { names: "", values: "" };
+  const valid = envs.filter(e => e && e.name);
+  return {
+    names: valid.map(e => e.name).join(", "),
+    values: valid.map(e => e.value ?? "").join(", ")
+  };
 }
 
 // ==================== 统一部署分发 ====================
-async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '') {
+async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '', cfDomain = false) {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
-  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400 };
-  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs, kvBinding, customDomain);
+  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "" };
+  if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs, kvBinding, customDomain, !!cfDomain);
   if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs, kvBinding);
-  return { success: false, error: "type 无效", logs: ["ERR"], status: 400 };
+  return { success: false, error: "type 无效", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "" };
 }
 
 async function handleUnifiedDeploy(request, env) {
+  const startTime = Date.now();
   const ct = request.headers.get("Content-Type") || "";
   let p = {};
   if (ct.includes("application/json")) {
     const b = await request.json().catch(() => ({}));
-    p = { 
-      type: b.type, 
-      id: b.id || b.accountid, 
-      token: b.token, 
+    p = {
+      type: b.type,
+      id: b.id || b.accountid,
+      token: b.token,
       kvBinding: b.kvBinding || b.kvbinding || b.kvVar || b.kvvar || '',
-      kv: b.kv || b.kvname, 
-      kvAction: b.kvAction || b.kvaction || 'keep', 
-      name: b.name || b.projectname, 
-      source: b.source || b.codeurl || b.zipurl || b.url, 
+      kv: b.kv || b.kvname,
+      kvAction: b.kvAction || b.kvaction || 'keep',
+      name: b.name || b.projectname,
+      source: b.source || b.codeurl || b.zipurl || b.url,
       envs: b.envs || [],
-      customDomain: b.customDomain || b.customdomain || b.domain || ''
+      customDomain: b.customDomain || b.customdomain || b.domain || '',
+      subdomain: b.subdomain || '',
+      cfDomain: b.cfDomain,
+      serverLabel: b.serverLabel || '',
+      triggerSource: b.triggerSource || 'API调用'
     };
   } else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    p = { 
-      type: fd.get("type"), 
-      id: fd.get("id") || fd.get("accountid"), 
-      token: fd.get("token"), 
+    p = {
+      type: fd.get("type"),
+      id: fd.get("id") || fd.get("accountid"),
+      token: fd.get("token"),
       kvBinding: fd.get("kvBinding") || fd.get("kvbinding") || fd.get("kvVar") || fd.get("kvvar") || '',
-      kv: fd.get("kv") || fd.get("kvname"), 
-      kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep', 
-      name: fd.get("name") || fd.get("projectname"), 
-      source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"), 
+      kv: fd.get("kv") || fd.get("kvname"),
+      kvAction: fd.get("kvAction") || fd.get("kvaction") || 'keep',
+      name: fd.get("name") || fd.get("projectname"),
+      source: fd.get("source") || fd.get("codeurl") || fd.get("zipurl") || fd.get("url"),
       envs: [],
-      customDomain: fd.get("customDomain") || fd.get("customdomain") || fd.get("domain") || ''
-    }; 
+      customDomain: fd.get("customDomain") || fd.get("customdomain") || fd.get("domain") || '',
+      subdomain: fd.get("subdomain") || '',
+      cfDomain: fd.get("cfDomain") === "true" || fd.get("cfDomain") === "1",
+      serverLabel: fd.get("serverLabel") || '',
+      triggerSource: fd.get("triggerSource") || 'API调用'
+    };
   }
+  const matchedAcc = await findAccountByIdOrIdentifier(env, p.id);
+  const enableCf = typeof p.cfDomain === "boolean" ? p.cfDomain : (matchedAcc ? matchedAcc.cfDomain === true : false);
+  const serverDisplay = p.serverLabel || (matchedAcc ? `${matchedAcc.identifier} (${p.id})` : (p.id || ""));
+
   const prefix = await getSystemPrefix(env);
   p.source = processSourceUrl(p.source, prefix);
-  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs, p.kvBinding, p.customDomain);
+  const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs, p.kvBinding, p.customDomain, enableCf);
+
+  const envSummary = summarizeEnvs(p.envs);
+  const isWorker = String(p.type || "").toLowerCase() === "worker";
+  await appendDeployRecord(env, {
+    time: formatBeijingTime(),
+    status: result.success ? "成功" : "失败",
+    server: serverDisplay,
+    method: isWorker ? "Worker" : "Pages",
+    projectName: p.name || "",
+    kvVar: p.kvBinding || "",
+    kvRepo: p.kv ? `${p.kv} (${p.kvAction === 'clear' ? '清空' : '保留'})` : "",
+    envVars: envSummary.names,
+    envValues: envSummary.values,
+    subdomain: p.subdomain || (p.customDomain ? p.customDomain.split(".")[0] : ""),
+    cfDomain: result.cfDomain || "",
+    sourceUrl: result.resolvedSourceUrl || p.source || "",
+    triggerSource: p.triggerSource || "API调用",
+    duration: `${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+    logs: result.logs || []
+  });
+
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
 async function handleGetDeploy(url, env) {
+  const startTime = Date.now();
   const q = url.searchParams;
   const prefix = await getSystemPrefix(env);
+  const accId = q.get("accountid") || q.get("id");
+  const matchedAcc = await findAccountByIdOrIdentifier(env, accId);
+  const cfParam = q.get("cfDomain");
+  const enableCf = cfParam !== null ? (cfParam === "true" || cfParam === "1") : (matchedAcc ? matchedAcc.cfDomain === true : false);
+  const serverDisplay = matchedAcc ? `${matchedAcc.identifier} (${accId})` : (accId || "");
+
   const source = processSourceUrl(q.get("codeurl") || q.get("source") || q.get("zipurl") || "default", prefix);
   const kvBinding = q.get("kvBinding") || q.get("kvbinding") || q.get("kvVar") || q.get("kvvar") || "";
+  const kvName = q.get("kvname") || q.get("kv") || "";
+  const kvAction = q.get("kvAction") || 'keep';
+  const projName = q.get("projectname") || q.get("name") || "";
   const customDomain = q.get("customDomain") || q.get("customdomain") || q.get("domain") || "";
-  const result = await deployByType(q.get("type"), q.get("accountid") || q.get("id"), q.get("token"), q.get("kvname") || q.get("kv"), q.get("projectname") || q.get("name"), source, q.get("kvAction") || 'keep', [], kvBinding, customDomain);
+  const type = q.get("type");
+
+  const result = await deployByType(type, accId, q.get("token"), kvName, projName, source, kvAction, [], kvBinding, customDomain, enableCf);
+
+  await appendDeployRecord(env, {
+    time: formatBeijingTime(),
+    status: result.success ? "成功" : "失败",
+    server: serverDisplay,
+    method: String(type || "").toLowerCase() === "worker" ? "Worker" : "Pages",
+    projectName: projName,
+    kvVar: kvBinding,
+    kvRepo: kvName ? `${kvName} (${kvAction === 'clear' ? '清空' : '保留'})` : "",
+    envVars: "",
+    envValues: "",
+    subdomain: customDomain ? customDomain.split(".")[0] : "",
+    cfDomain: result.cfDomain || "",
+    sourceUrl: result.resolvedSourceUrl || source,
+    triggerSource: "GET API",
+    duration: `${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+    logs: result.logs || []
+  });
+
   return new Response(JSON.stringify(result), { status: result.status || 200, headers: { "Content-Type": "application/json" } });
 }
 
 async function handleDeployWorker(request, env) {
+  const startTime = Date.now();
   const b = await request.json().catch(() => ({}));
+  const matchedAcc = await findAccountByIdOrIdentifier(env, b.accountId);
+  const enableCf = typeof b.cfDomain === "boolean" ? b.cfDomain : (matchedAcc ? matchedAcc.cfDomain === true : false);
+  const serverDisplay = b.serverLabel || (matchedAcc ? `${matchedAcc.identifier} (${b.accountId})` : (b.accountId || ""));
+
   const prefix = await getSystemPrefix(env);
   const codeUrl = processSourceUrl(b.codeUrl, prefix);
-  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '', b.customDomain || '');
+  const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '', b.customDomain || '', enableCf);
+
+  const envSummary = summarizeEnvs(b.envs || []);
+  await appendDeployRecord(env, {
+    time: formatBeijingTime(),
+    status: r.success ? "成功" : "失败",
+    server: serverDisplay,
+    method: "Worker",
+    projectName: b.workerName || "",
+    kvVar: b.kvBinding || "",
+    kvRepo: b.kvName ? `${b.kvName} (${(b.kvAction || 'keep') === 'clear' ? '清空' : '保留'})` : "",
+    envVars: envSummary.names,
+    envValues: envSummary.values,
+    subdomain: b.customDomain ? b.customDomain.split(".")[0] : "",
+    cfDomain: r.cfDomain || "",
+    sourceUrl: r.resolvedSourceUrl || codeUrl || DEFAULT_WORKER_CODE_URL,
+    triggerSource: b.triggerSource || "单次部署",
+    duration: `${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+    logs: r.logs || []
+  });
+
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
 async function handleDeployPages(request, env) {
+  const startTime = Date.now();
   const b = await request.json().catch(() => ({}));
+  const matchedAcc = await findAccountByIdOrIdentifier(env, b.accountId);
+  const serverDisplay = b.serverLabel || (matchedAcc ? `${matchedAcc.identifier} (${b.accountId})` : (b.accountId || ""));
+
   const prefix = await getSystemPrefix(env);
   const zipUrl = processSourceUrl(b.zipUrl, prefix);
   const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '');
+
+  const envSummary = summarizeEnvs(b.envs || []);
+  await appendDeployRecord(env, {
+    time: formatBeijingTime(),
+    status: r.success ? "成功" : "失败",
+    server: serverDisplay,
+    method: "Pages",
+    projectName: b.projectName || "",
+    kvVar: b.kvBinding || "",
+    kvRepo: b.kvName ? `${b.kvName} (${(b.kvAction || 'keep') === 'clear' ? '清空' : '保留'})` : "",
+    envVars: envSummary.names,
+    envValues: envSummary.values,
+    subdomain: "",
+    cfDomain: r.cfDomain || (b.projectName ? `https://${b.projectName}.pages.dev` : ""),
+    sourceUrl: r.resolvedSourceUrl || zipUrl || DEFAULT_PAGES_ZIP_URL,
+    triggerSource: b.triggerSource || "单次部署",
+    duration: `${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+    logs: r.logs || []
+  });
+
   return new Response(JSON.stringify(r), { status: r.status, headers: { "Content-Type": "application/json" } });
 }
 
@@ -769,11 +1069,24 @@ async function handleSaveConfig(request, env) {
   try {
     const body = await request.json();
     const data = await getStoredData(env);
-    data.defaultPrefix = body.defaultPrefix || "";
+    const normalizedDefault = normalizePrefixSlash(body.defaultPrefix || "");
+    let prefixes = Array.isArray(body.prefixes)
+      ? body.prefixes.map(normalizePrefixSlash).filter(Boolean)
+      : [...(data.prefixes || [])];
+
+    if (normalizedDefault && !prefixes.includes(normalizedDefault)) {
+      prefixes.unshift(normalizedDefault);
+    }
+    data.prefixes = prefixes;
+    data.defaultPrefix = normalizedDefault || (prefixes[0] || "");
     await env.KV.put(ACCOUNTS_KEY, JSON.stringify(data));
-    return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
-  } catch(e) { 
-    return new Response(JSON.stringify({ success: false }), { status: 500 }); 
+    return new Response(JSON.stringify({
+      success: true,
+      defaultPrefix: data.defaultPrefix,
+      prefixes: data.prefixes
+    }), { headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
   }
 }
 
@@ -785,7 +1098,7 @@ async function handleSaveGlobalProjects(request, env) {
     if (Array.isArray(body.pageProjects)) data.pageProjects = body.pageProjects;
     await env.KV.put(ACCOUNTS_KEY, JSON.stringify(data));
     return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
-  } catch(e) {
+  } catch (e) {
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
   }
 }
@@ -794,6 +1107,7 @@ async function handlePostAccount(request, env) {
   try {
     const body = await request.json();
     if (!body?.identifier) return new Response(JSON.stringify({ success: false, error: "标识必填" }), { status: 400 });
+    body.cfDomain = body.cfDomain === true;
     const data = await getStoredData(env);
     const idx = data.accounts.findIndex(a => a.identifier === body.identifier);
     if (idx >= 0) data.accounts[idx] = body; else data.accounts.push(body);
@@ -821,9 +1135,9 @@ async function handleCreateBackup(env) {
   try {
     const raw = await env.KV.get(ACCOUNTS_KEY);
     if (!raw) return new Response(JSON.stringify({ success: false, error: "无数据可备份" }));
-    const d = new Date(); d.setTime(d.getTime() + 8 * 3600000); 
+    const d = new Date(); d.setTime(d.getTime() + 8 * 3600000);
     const pad = n => n.toString().padStart(2, '0');
-    const key = `backup_${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}_${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+    const key = `backup_${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}_${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
     await env.KV.put(key, raw);
     return new Response(JSON.stringify({ success: true, key }), { headers: { "Content-Type": "application/json" } });
   } catch (e) { return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 }); }
@@ -868,35 +1182,35 @@ async function handleImportAll(request, env) {
 
 // ==================== 前端共享样式 ====================
 const GLOBAL_STYLE = `
-  :root { 
-    --primary: #f38020; --primary-hover: #e06c11; 
-    --bg: #f0f2f5; --card-bg: #ffffff; 
-    --text: #2c3e50; --text-light: #7f8c8d; 
-    --border: #eaedf1; --shadow: 0 4px 12px rgba(0, 0, 0, 0.05); 
+  :root {
+    --primary: #f38020; --primary-hover: #e06c11;
+    --bg: #f0f2f5; --card-bg: #ffffff;
+    --text: #2c3e50; --text-light: #7f8c8d;
+    --border: #eaedf1; --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     --radius: 12px; --btn-radius: 8px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { 
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background: var(--bg); color: var(--text);
-    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 15px; 
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 15px;
     -webkit-font-smoothing: antialiased;
   }
-  .container { width: 100%; max-width: 950px; }
+  .container { width: 100%; max-width: 980px; }
   .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 25px; }
   h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #1e293b; text-align: center; }
-  
+
   input:not([type="checkbox"]):not([type="file"]), select {
     width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
     outline: none; transition: border-color 0.2s, box-shadow 0.2s; background: #fafbfc;
   }
   input:not([type="checkbox"]):not([type="file"]):focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(243, 128, 32, 0.1); background: #fff; }
   select:disabled { background: #f1f2f6; color: #a4b0be; cursor: not-allowed; }
-  
+
   input[type="checkbox"] { width: auto; accent-color: var(--primary); cursor: pointer; transform: scale(1.1); margin-right: 6px; padding: 0; }
-  
-  button { 
-    border: none; border-radius: var(--btn-radius); cursor: pointer; font-size: 14px; font-weight: 500; 
+
+  button {
+    border: none; border-radius: var(--btn-radius); cursor: pointer; font-size: 14px; font-weight: 500;
     transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   }
   .btn-primary { background: var(--primary); color: #fff; }
@@ -904,7 +1218,7 @@ const GLOBAL_STYLE = `
   .btn-danger { background: #e74c3c; color: #fff; }
   .btn-danger:hover { background: #c0392b; transform: translateY(-1px); }
   .btn-icon {
-    background: transparent; color: var(--text-light); padding: 6px; border-radius: 6px; 
+    background: transparent; color: var(--text-light); padding: 6px; border-radius: 6px;
   }
   .btn-icon:hover:not(:disabled) { background: #f1f2f6; color: var(--primary); }
   .btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -915,11 +1229,11 @@ const GLOBAL_STYLE = `
   textarea { width: 100%; height: 350px; background: #1e293b; color: #4ade80; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; padding: 15px; border-radius: 8px; border: none; resize: vertical; outline: none; line-height: 1.5; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-  
+
   .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.5); justify-content: center; align-items: center; z-index: 1000; padding: 15px; backdrop-filter: blur(2px); }
   .modal.active { display: flex; }
   .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 750px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-  
+
   .pwd-wrap { position: relative; display: flex; align-items: center; }
   .pwd-wrap input { padding-right: 36px !important; }
   .pwd-toggle { position: absolute; right: 10px; cursor: pointer; color: var(--text-light); display: flex; align-items: center; justify-content: center; transition: 0.2s; }
@@ -986,14 +1300,17 @@ function getMainPage() {
     .accordion-content { display: none; padding: 16px; border-top: 1px solid var(--border); }
     .accordion-content.active { display: block; }
     button.action-btn { width: 100%; padding: 12px; margin-top: 10px; }
-    
+
+    .cf-monitor-bar { display: none; margin-bottom: 8px; padding: 8px 12px; border-radius: 6px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.5; word-break: break-all; }
+    .cf-monitor-bar.active { display: block; }
+
     pre { background: #f8fafc; color: #334155; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
     code { font-family: 'SF Mono', 'Fira Code', monospace; }
     .info-section { margin-bottom: 20px; }
     .info-section h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1e293b; }
     .info-section p { font-size: 13px; color: #475569; margin-bottom: 8px; line-height: 1.6; }
   </style></head><body>
-  <div class="container" style="max-width: 600px;">
+  <div class="container" style="max-width: 620px;">
     <div class="card">
       <h2>☁️ Cloudflare 部署工具</h2>
       <div class="form-group"><label>Account ID</label><input type="text" id="accountId" placeholder="例如：8ab2...c8d0"></div>
@@ -1004,11 +1321,11 @@ function getMainPage() {
         </div>
       </div>
       <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
-      
-      <div class="form-group" style="display: flex; gap: 10px; align-items: flex-end;">
-        <div style="width: 140px;"><label>KV 变量名（可选）</label><input type="text" id="kvBinding" placeholder="留空保留原有关系"></div>
-        <div style="flex: 1;"><label>KV 名称（命名空间，可选）</label><input type="text" id="kvName" placeholder="留空保留原绑定"></div>
-        <div style="width: 90px;"><select id="kvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
+
+      <div class="form-group" style="display: flex; gap: 8px; align-items: flex-end;">
+        <div style="flex: 1 1 0; min-width: 0;"><label>KV变量</label><input type="text" id="kvBinding" placeholder="留空保留原有关系"></div>
+        <div style="flex: 1 1 0; min-width: 0;"><label>KV仓库</label><input type="text" id="kvName" placeholder="留空保留原绑定"></div>
+        <div style="width: 72px; flex-shrink: 0;"><select id="kvAction" disabled style="padding: 10px 6px;"><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
 
       <!-- ENV 设置区 -->
@@ -1027,6 +1344,11 @@ function getMainPage() {
         <div id="workerPanel" class="accordion-content">
           <div class="form-group"><label>代码源地址</label><input type="url" id="workerCodeUrl" value="https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js"></div>
           <div class="form-group"><label>自定义域（可选，完整域名）</label><input type="text" id="workerCustomDomain" placeholder="例如：app.example.com（留空不绑定）"></div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; cursor:pointer; color:#334155; margin-bottom:0;">
+              <input type="checkbox" id="workerEnableCfDomain"> CF域名（开启 workers.dev：Production 开启、Preview 关闭；取消则均关闭）
+            </label>
+          </div>
           <button id="btnDeployWorker" class="btn-primary action-btn">开始部署 Worker</button>
         </div>
       </div>
@@ -1038,54 +1360,60 @@ function getMainPage() {
         </div>
       </div>
 
-      <div style="margin-top: 20px;"><label style="font-size:13px; font-weight:500;">部署日志</label><textarea id="logOutput" readonly placeholder="日志输出..."></textarea></div>
+      <div style="margin-top: 20px;">
+        <label style="font-size:13px; font-weight:500;">监视窗口 / 部署日志</label>
+        <div id="cfDomainMonitor" class="cf-monitor-bar"></div>
+        <textarea id="logOutput" readonly placeholder="日志输出..."></textarea>
+      </div>
 
       <div class="accordion" style="margin-top: 15px;">
         <div class="accordion-header" data-target="infoPanel"><span>📖 使用说明</span><span class="arrow">▼</span></div>
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
-            <h3>📋 常用部署与三区配置说明</h3>
-            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，配置已拆分为三个独立折叠区域，实现项目一次配置、多服务器组复用：</p>
+            <h3>📋 三区配置、CF域名开关与缺省前缀说明</h3>
+            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，支持多服务器组与全局项目复用：</p>
             <pre><code>1. 第一区【服务器设置（账户组）】：
    - 配置组标识、Account ID、API Token、默认组环境变量(ENV)以及【组项目域名】（例如：example.com）。
-   - 直接勾选附加第二区和第三区已录入的 Worker / Pages 项目；未附加的项目不会出现在常用部署清单中。
+   - 每个服务器组内均配有【CF域名】可选框：勾选后开启 CF 提供的 workers.dev 域名（Production 开启、Preview 关闭）；取消勾选则关闭 workers.dev 域名（Production 与 Preview 均关闭）。若开启了 CF域名，部署时会在监视窗口中显示。
+   - 勾选附加第二区和第三区已录入的 Worker / Pages 项目；未附加的项目不会出现在常用部署清单中。
 
 2. 第二区【Worker 项目区】：
-   - 全局维护 Worker 项目模板，支持为单个项目独立配置专属环境变量(ENV)（可选“保留”或“替换”策略）及【自定义子域名】（例如：sub）。
-   - 自动域名拼接规则：当 Worker 项目配置了子域名（如 sub）且所属服务器组配置了项目域名（如 example.com）时，部署完成后自动为该 Worker 绑定自定义域 sub.example.com（需确保该域名已托管在对应 Cloudflare 账户下）。
+   - 全局维护 Worker 项目模板，支持配置 KV变量、KV仓库及保留/清空策略、独立环境变量(ENV)及【自定义子域名】。
+   - 当 Worker 项目配置了子域名且所属服务器组配置了组项目域名时，部署完成后自动绑定自定义域（需已托管在对应 Cloudflare 账户下）。
 
 3. 第三区【Pages 项目区】：
-   - 全局维护 Pages 项目模板，同样支持为单个项目独立配置专属环境变量(ENV)（可选“保留”或“替换”策略）。
-   - 设为隐藏的项目会自动归类收纳至“隐藏的项目”折叠标签中，点击可展开管理。
+   - 全局维护 Pages 项目模板，支持配置 KV变量、KV仓库及保留/清空策略与独立环境变量(ENV)。
+   - 设为隐藏的项目会归类收纳至“隐藏的项目”折叠标签中，点击可展开管理。
 
-※ 环境变量优先级说明：常用部署时，若在组内勾选了“附加组 ENV”，系统会将组变量与项目独立变量合并；遇到同名变量时，优先使用项目自身的独立 ENV 配置。</code></pre>
+4. 【缺省地址前缀】与【部署记录】：
+   - 缺省地址前缀采用下拉列表展示，右侧设有“设置”按钮，可进行新增、编辑、删除与排序；默认处于收缩状态，点击展开，再点收回。新增或保存前缀时，若末尾不是 "/" 会自动补充。
+   - 每次部署均会自动保存至【部署记录】（/records），记录部署时间、部署状态、服务器、部署方式（Worker/Pages）、项目名称、KV变量、KV仓库、ENV变量、ENV值、子域名（如有）、CF域名、项目来源、耗时与日志。</code></pre>
           </div>
           <div class="info-section">
             <h3>🌐 单次页面部署</h3>
-            <p>在当前表单中填写 Account ID、API Token、KV 变量名（可选，留空保留原有关系）、KV 名称（命名空间，可选）和项目名称，然后选择对应的部署面板（Worker 或 Pages），填写代码源地址（Worker 可选填完整自定义域）并点击部署按钮。</p>
+            <p>填写 Account ID、API Token、KV变量（可选）、KV仓库（可选）和项目名称，展开对应部署面板（Worker 可选填自定义域与 CF域名 开关）后点击部署，部署结果与日志将输出至监视窗口并写入部署记录。</p>
             <p><strong>Worker 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
-KV 变量名: KV （可留空，留空则保留原有绑定关系；新绑定且未填时默认使用 KV）
-KV 名称: MY_KV_STORE （命名空间名称，可留空）保留：使用原KV内容，清空：清空原KV内容
-变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
+KV变量: KV （可选，留空保留原有绑定关系）
+KV仓库: MY_KV_STORE （可选，命名空间名称） 保留 / 清空
+变量设置： 变量名自定义（区分大小写），变量值填内容，保留原值 / 使用新值
 项目名称: my-worker-app
 代码源地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/_worker.js
-自定义域: app.example.com （可选，留空不绑定）</code></pre>
+自定义域: app.example.com （可选）
+CF域名: 勾选开启 workers.dev（Production 开启、Preview 关闭）</code></pre>
             <p><strong>Pages 示例：</strong></p>
             <pre><code>Account ID: 8ab2...c8d0
 API Token: cfcut_...
-KV 变量名: KV （可留空，留空则保留原有绑定关系；新绑定且未填时默认使用 KV）
-KV 名称: MY_KV_STORE （命名空间名称，可留空）保留：使用原KV内容，清空：清空原KV内容
-变量设置： 变量名自定义，区分大小写 变量值填内容 保留原值：遇同名变量时使用原值，使用新值：遇同名变量时替换为新值
+KV变量: KV （可选，留空保留原有绑定关系）
+KV仓库: MY_KV_STORE （可选，命名空间名称） 保留 / 清空
 项目名称: my-pages-site
 ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/worker.zip</code></pre>
           </div>
           <div class="info-section">
             <h3>⚡ POST 部署</h3>
-            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或传统表单格式（可通过 <code>kvBinding</code> 指定 KV 变量名，通过 <code>customDomain</code> 指定 Worker 自定义域名）。</p>
-            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：如果您在环境变量配置了 PASSWORD 密码，API 请求必须携带密码（通过 URL 参数 ?pwd=密码 或 Header头 Authorization: Bearer 密码）。</p>
-            <p><strong>JavaScript (Fetch) 格式（推荐使用 Header 鉴权）：</strong></p>
+            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或表单格式（可通过 <code>kvBinding</code> 指定 KV变量，<code>kv</code> 指定 KV仓库，<code>customDomain</code> 指定自定义域名，<code>cfDomain</code> 指定是否开启 workers.dev）。</p>
+            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若配置了 PASSWORD，API 请求需通过 ?pwd=密码 或 Authorization: Bearer 密码 鉴权。</p>
             <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
   method: "POST",
   headers: {
@@ -1096,48 +1424,27 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
     type: "worker",
     id: "YOUR_ACCOUNT_ID",
     token: "YOUR_API_TOKEN",
-    kvBinding: "",
+    kvBinding: "KV",
     kv: "MY_KV_STORE",
     kvAction: "keep",
     name: "my-worker-app",
     source: "default",
-    customDomain: "app.example.com"
+    customDomain: "app.example.com",
+    cfDomain: true
   })
 }).then(res => res.json()).then(console.log);</code></pre>
-            <p><strong>cURL JSON 格式（使用 URL 传参鉴权）：</strong></p>
-            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy?pwd=您的系统访问密码" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "type": "worker",
-    "id": "YOUR_ACCOUNT_ID",
-    "token": "YOUR_API_TOKEN",
-    "kvBinding": "",
-    "kv": "MY_KV_STORE",
-    "kvAction": "keep",
-    "source": "default",
-    "name": "my-worker-app",
-    "customDomain": "app.example.com"
-  }'</code></pre>
-            <p><strong>cURL 表单格式（使用 Header 鉴权）：</strong></p>
-            <pre><code>curl -X POST "https://your-worker.workers.dev/api/deploy" \\
-  -H "Authorization: Bearer 您的系统访问密码" \\
-  -H "Content-Type": "application/x-www-form-urlencoded" \\
-  -d "type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=MY_KV_STORE&kvAction=keep&projectname=my-worker-app&codeurl=default&customDomain=app.example.com"</code></pre>
-            <p>Pages 部署只需将 <code>type</code> 改为 <code>page</code>，源地址参数可用 <code>zipurl</code> 或 <code>source</code>。</p>
           </div>
           <div class="info-section">
             <h3>🔗 GET 部署</h3>
-            <p>直接在浏览器地址栏或脚本中通过 URL 调用（可通过 <code>kvBinding</code> 参数指定 KV 变量名，通过 <code>customDomain</code> 指定 Worker 自定义域名）。</p>
-            <p style="color: #e74c3c; font-weight: 500; font-size: 12px; margin: 5px 0 10px;">※ 安全提示：若开启了密码保护，必须在 URL 任意位置追加 &pwd=您的系统访问密码</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=&projectname=my-worker-app&codeurl=default&customDomain=app.example.com&pwd=您的系统访问密码</code></pre>
-            <p>Pages 部署示例：</p>
-            <pre><code>https://your-worker.workers.dev/api/deploy?type=page&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=&kvname=&projectname=my-pages-site&zipurl=https://example.com/site.zip&pwd=您的系统访问密码</code></pre>
+            <p>通过 URL 参数直接触发部署（支持 <code>kvBinding</code>、<code>kvname</code>、<code>projectname</code>、<code>codeurl</code>/<code>zipurl</code>、<code>customDomain</code>、<code>cfDomain</code> 与 <code>pwd</code>）。</p>
+            <pre><code>https://your-worker.workers.dev/api/deploy?type=worker&accountid=YOUR_ACCOUNT_ID&token=YOUR_API_TOKEN&kvBinding=KV&kvname=MY_KV_STORE&projectname=my-worker-app&codeurl=default&cfDomain=true&pwd=您的系统访问密码</code></pre>
           </div>
         </div>
       </div>
 
       <div class="nav-links" style="align-items: center;">
         <a href="/dashboard">📋 常用部署</a>
+        <a href="/records">📜 部署记录</a>
         <a href="javascript:void(0)" id="versionBtn" style="border-color: #10b981; color: #10b981; border-radius: 8px; padding: 8px 16px;">获取版本中...</a>
         <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
@@ -1157,7 +1464,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
 
   <script>
     ${GLOBAL_SCRIPT}
-    (function(){
+    (function () {
       let allAccountsForUpdate = [];
       let allWorkerProjectsForUpdate = [];
       fetch('/api/accounts').then(res => res.json()).then(data => {
@@ -1177,7 +1484,7 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
               vBtn.textContent = '✨ 发现新版 v' + latestVersion;
               vBtn.style.backgroundColor = '#10b981';
               vBtn.style.color = '#fff';
-              
+
               vBtn.addEventListener('click', () => {
                 document.getElementById('updateModalText').innerText = '当前版本: v${CURRENT_VERSION}\\n最新版本: v' + latestVersion;
                 document.getElementById('updateModal').classList.add('active');
@@ -1199,21 +1506,21 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         document.getElementById('updateModal').classList.remove('active');
         const output = document.getElementById('logOutput');
         output.value = '准备自动更新系统...\\n';
-        
+
         const domain = window.location.hostname;
         const installProj = allWorkerProjectsForUpdate.find(w => w.name === 'install');
-        
+
         let targetAcc = allAccountsForUpdate.find(a => domain.includes(a.identifier) || (a.identifier && a.identifier.includes(domain)) || (a.domain && domain.endsWith(a.domain)));
         if (!targetAcc && installProj) {
           targetAcc = allAccountsForUpdate.find(a => Array.isArray(a.attachedWorkers) && a.attachedWorkers.includes(installProj.id));
         }
         if (!targetAcc && allAccountsForUpdate.length > 0) targetAcc = allAccountsForUpdate[0];
-        
+
         if (!targetAcc) {
-           output.value += '[错误] 无法定位部署账户，请先在【常用部署】中配置相关 AccountID 及 Token。\\n';
-           return;
+          output.value += '[错误] 无法定位部署账户，请先在【常用部署】中配置相关 AccountID 及 Token。\\n';
+          return;
         }
-        
+
         output.value += '[信息] 匹配账户标识: ' + targetAcc.identifier + '\\n';
         output.value += '[信息] 目标更新项目: install\\n';
         output.scrollTop = output.scrollHeight;
@@ -1225,12 +1532,13 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           kvName: '',
           kvAction: 'keep',
           workerName: 'install',
-          codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js'
+          codeUrl: 'https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/install.js',
+          cfDomain: targetAcc.cfDomain === true
         };
 
         try {
           const res = await fetch('/api/deploy-worker', {
-            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           const data = await res.json();
           output.value += (data.logs || []).join('\\n') + '\\n';
@@ -1245,9 +1553,9 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
       kvInput.addEventListener('input', () => kvAction.disabled = !kvInput.value.trim());
 
       const envContainer = document.getElementById('envContainer');
-      document.getElementById('enableEnv').addEventListener('change', function() {
+      document.getElementById('enableEnv').addEventListener('change', function () {
         envContainer.style.display = this.checked ? 'block' : 'none';
-        if(this.checked && document.getElementById('envList').children.length === 0) addEnvRow();
+        if (this.checked && document.getElementById('envList').children.length === 0) addEnvRow();
       });
       document.getElementById('btnAddEnv').addEventListener('click', () => addEnvRow());
 
@@ -1264,13 +1572,24 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         document.getElementById('envList').appendChild(div);
       }
 
-      document.querySelectorAll('.accordion-header').forEach(h => h.addEventListener('click', function(){
+      document.querySelectorAll('.accordion-header').forEach(h => h.addEventListener('click', function () {
         const target = document.getElementById(this.dataset.target);
         const isActive = target.classList.contains('active');
         document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('active'));
         document.querySelectorAll('.accordion-header .arrow').forEach(a => a.textContent = '▼');
-        if (!isActive) { target.classList.add('active'); this.querySelector('.arrow').textContent = '▼'; }
+        if (!isActive) { target.classList.add('active'); this.querySelector('.arrow').textContent = '▲'; }
       }));
+
+      function updateCfMonitor(enabled, cfDomainStr) {
+        const bar = document.getElementById('cfDomainMonitor');
+        if (enabled && cfDomainStr) {
+          bar.textContent = '🌐 CF域名已开启（Production 开启 / Preview 关闭）：' + cfDomainStr;
+          bar.classList.add('active');
+        } else {
+          bar.textContent = '';
+          bar.classList.remove('active');
+        }
+      }
 
       async function runDeploy(type) {
         const accountId = document.getElementById('accountId').value.trim();
@@ -1281,8 +1600,9 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
         const name = document.getElementById('projectName').value.trim();
         const src = document.getElementById(type === 'worker' ? 'workerCodeUrl' : 'pagesZipUrl').value.trim();
         const customDomain = type === 'worker' ? document.getElementById('workerCustomDomain').value.trim() : '';
+        const enableCfDomain = type === 'worker' ? document.getElementById('workerEnableCfDomain').checked : false;
         if (!accountId || !apiToken || !name) return alert('请填写必填项');
-        
+
         let envs = [];
         if (document.getElementById('enableEnv').checked) {
           document.querySelectorAll('#envList > div').forEach(row => {
@@ -1293,18 +1613,23 @@ ZIP 地址: https://raw.githubusercontent.com/Agedmonk/cfcode/refs/heads/main/wo
           });
         }
 
+        updateCfMonitor(false, '');
         const output = document.getElementById('logOutput');
         output.value = '部署中...\\n'; output.scrollTop = output.scrollHeight;
-        
-        const payload = type === 'worker' 
-          ? {accountId, apiToken, kvBinding, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs, customDomain}
-          : {accountId, apiToken, kvBinding, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs};
-          
+
+        const payload = type === 'worker'
+          ? { accountId, apiToken, kvBinding, kvName, kvAction: kvActionVal, workerName: name, codeUrl: src, envs, customDomain, cfDomain: enableCfDomain, triggerSource: '单次部署' }
+          : { accountId, apiToken, kvBinding, kvName, kvAction: kvActionVal, projectName: name, zipUrl: src, envs, triggerSource: '单次部署' };
+
         const res = await fetch(type === 'worker' ? '/api/deploy-worker' : '/api/deploy-pages', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         const data = await res.json();
         output.value = (data.logs || []).join('\\n'); output.scrollTop = output.scrollHeight;
+
+        if (type === 'worker' && enableCfDomain && data.success) {
+          updateCfMonitor(true, data.cfDomain || (name + '.workers.dev'));
+        }
       }
       document.getElementById('btnDeployWorker').addEventListener('click', () => runDeploy('worker'));
       document.getElementById('btnDeployPages').addEventListener('click', () => runDeploy('pages'));
@@ -1321,7 +1646,10 @@ function getDashboardPage() {
     .account-header:hover { background: #f1f2f6; }
     .account-name { font-size: 14px; font-weight: 600; color: #1e293b; }
     .account-domain-tag { font-size: 11px; color: #64748b; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; margin-left: 8px; font-weight: normal; }
-    
+    .account-cf-tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: 500; }
+    .account-cf-tag.on { color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; }
+    .account-cf-tag.off { color: #64748b; background: #f1f5f9; }
+
     .project-list { display: none; padding: 12px; border-top: 1px solid var(--border); }
     .project-list.active { display: block; }
 
@@ -1335,10 +1663,13 @@ function getDashboardPage() {
     .project-title { display: flex; align-items: center; cursor: pointer; font-size: 13px; color: #334155; }
     .project-details { display: none; margin-top: 4px; padding-left: 24px; font-size: 11px; color: #94a3b8; line-height: 1.5; word-break: break-all; }
     .project-details.active { display: block; }
-    
+
     .temp-deploy-block { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; align-items: center; }
     .temp-cb-wrap { font-size: 13px; font-weight: 500; color: #475569; display: flex; align-items: center; }
-    
+
+    .cf-monitor-box { display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.6; }
+    .cf-monitor-box.active { display: block; }
+
     .deploy-btn { width: 100%; padding: 12px; font-size: 15px; margin-top: 15px; }
     @media (max-width: 600px) {
       .project-columns { gap: 6px; }
@@ -1352,9 +1683,13 @@ function getDashboardPage() {
       <h2>📋 常用部署清单</h2>
       <div id="accountList"></div>
       <button id="btnDeploySelected" class="btn-primary deploy-btn">一键部署所选项目</button>
-      <div style="margin-top: 15px;"><textarea id="logOutput" readonly placeholder="日志将在此输出..."></textarea></div>
+      <div style="margin-top: 15px;">
+        <div id="cfMonitorBox" class="cf-monitor-box"></div>
+        <textarea id="logOutput" readonly placeholder="监视窗口与日志将在此输出..."></textarea>
+      </div>
       <div class="nav-links">
         <a href="/accounts">⚙️ 账户设置</a>
+        <a href="/records">📜 部署记录</a>
         <a href="/">🏠 返回主页</a>
         <a href="/logout" class="danger-link">🚪 退出登录</a>
       </div>
@@ -1375,8 +1710,8 @@ function getDashboardPage() {
         renderAccounts();
       }
     }
-    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text||''; return div.innerHTML; }
-    
+    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text || ''; return div.innerHTML; }
+
     function getGroupAttachedProjects(account, type) {
       if (type === 'worker') {
         const ids = Array.isArray(account.attachedWorkers) ? account.attachedWorkers : [];
@@ -1391,19 +1726,22 @@ function getDashboardPage() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
       let visibleCount = 0;
-      
+
       allAccounts.forEach((account, accIndex) => {
         if (account.show === false) return;
         visibleCount++;
         const activeWorkers = getGroupAttachedProjects(account, 'worker');
         const activePages = getGroupAttachedProjects(account, 'page');
         const domainBadge = account.domain ? '<span class="account-domain-tag">' + escapeHtml(account.domain) + '</span>' : '';
-        
+        const cfBadge = account.cfDomain === true
+          ? '<span class="account-cf-tag on">CF域名: 开启(Prod开/Prev关)</span>'
+          : '<span class="account-cf-tag off">CF域名: 关闭</span>';
+
         const accDiv = document.createElement('div');
         accDiv.className = 'account-item';
-        accDiv.innerHTML = 
+        accDiv.innerHTML =
           '<div class="account-header" data-acc-index="' + accIndex + '">' +
-            '<div style="display:flex; align-items:center;"><input type="checkbox" class="account-checkbox" data-acc-index="' + accIndex + '"><span class="account-name">' + escapeHtml(account.identifier) + '</span>' + domainBadge + '</div>' +
+            '<div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;"><input type="checkbox" class="account-checkbox" data-acc-index="' + accIndex + '"><span class="account-name">' + escapeHtml(account.identifier) + '</span>' + domainBadge + cfBadge + '</div>' +
             '<span class="arrow" style="color:#94a3b8; font-size:12px;">▼</span>' +
           '</div>' +
           '<div class="project-list">' +
@@ -1421,8 +1759,8 @@ function getDashboardPage() {
               '<label class="temp-cb-wrap"><input type="checkbox" class="temp-checkbox" data-acc-index="' + accIndex + '"> 临时部署</label>' +
               '<select class="temp-type" data-acc-index="' + accIndex + '"><option value="worker">Worker</option><option value="page">Pages</option></select>' +
               '<input type="text" class="temp-name" data-acc-index="' + accIndex + '" placeholder="项目名称">' +
-              '<input type="text" class="temp-kv-binding" data-acc-index="' + accIndex + '" placeholder="KV变量名(可选)">' +
-              '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV名(可选)">' +
+              '<input type="text" class="temp-kv-binding" data-acc-index="' + accIndex + '" placeholder="KV变量">' +
+              '<input type="text" class="temp-kv" data-acc-index="' + accIndex + '" placeholder="KV仓库">' +
               '<select class="temp-kv-action" data-acc-index="' + accIndex + '" disabled><option value="keep">保留</option><option value="clear">清空</option></select>' +
               '<input type="text" class="temp-source" data-acc-index="' + accIndex + '" placeholder="源地址(可选)">' +
               '<div class="temp-env-wrap" style="grid-column: 1 / -1; margin-top: 5px; border-top: 1px dashed #e2e8f0; padding-top: 8px;">' +
@@ -1434,16 +1772,16 @@ function getDashboardPage() {
           '</div>';
         container.appendChild(accDiv);
       });
-      
+
       if (visibleCount === 0) { container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:20px 0;">暂无显示的账户，请前往设置添加。</p>'; return; }
 
-      document.querySelectorAll('.account-header').forEach(h => h.addEventListener('click', function(e) {
-        if (e.target.tagName === 'INPUT') return; 
+      document.querySelectorAll('.account-header').forEach(h => h.addEventListener('click', function (e) {
+        if (e.target.tagName === 'INPUT') return;
         const list = this.nextElementSibling;
         list.classList.toggle('active');
         this.querySelector('.arrow').textContent = list.classList.contains('active') ? '▲' : '▼';
       }));
-      document.querySelectorAll('.project-title').forEach(t => t.addEventListener('click', function(e) {
+      document.querySelectorAll('.project-title').forEach(t => t.addEventListener('click', function (e) {
         if (e.target.tagName === 'INPUT') return;
         this.nextElementSibling.classList.toggle('active');
       }));
@@ -1454,21 +1792,21 @@ function getDashboardPage() {
         div.innerHTML = '<input type="text" class="e-name" placeholder="变量名(如API_KEY)" value="' + escapeHtml(name) + '" style="flex:2; font-size:12px; padding:6px;">' +
                         '<input type="text" class="e-val" placeholder="变量值" value="' + escapeHtml(val) + '" style="flex:3; font-size:12px; padding:6px;">' +
                         '<select class="e-act" style="flex:1; font-size:12px; padding:6px;">' +
-                          '<option value="keep" ' + (action==='keep'?'selected':'') + '>同名保留原值</option>' +
-                          '<option value="replace" ' + (action==='replace'?'selected':'') + '>同名使用新值</option>' +
+                          '<option value="keep" ' + (action === 'keep' ? 'selected' : '') + '>同名保留原值</option>' +
+                          '<option value="replace" ' + (action === 'replace' ? 'selected' : '') + '>同名使用新值</option>' +
                         '</select>' +
                         '<span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>';
         div.querySelector('.r-env').addEventListener('click', () => div.remove());
         listNode.appendChild(div);
       }
 
-      document.querySelectorAll('.temp-env-cb').forEach(cb => cb.addEventListener('change', function() {
+      document.querySelectorAll('.temp-env-cb').forEach(cb => cb.addEventListener('change', function () {
         const idx = parseInt(this.dataset.accIndex);
-        const list = document.querySelector('.temp-env-list[data-acc-index="'+idx+'"]');
-        const btn = document.querySelector('.add-env-btn[data-acc-index="'+idx+'"]');
+        const list = document.querySelector('.temp-env-list[data-acc-index="' + idx + '"]');
+        const btn = document.querySelector('.add-env-btn[data-acc-index="' + idx + '"]');
         list.style.display = this.checked ? 'flex' : 'none';
         btn.style.display = this.checked ? 'inline-block' : 'none';
-        
+
         if (this.checked && list.children.length === 0) {
           const account = allAccounts[idx];
           if (account.envs && account.envs.length > 0) {
@@ -1479,27 +1817,27 @@ function getDashboardPage() {
         }
       }));
 
-      document.querySelectorAll('.add-env-btn').forEach(btn => btn.addEventListener('click', function(e) {
+      document.querySelectorAll('.add-env-btn').forEach(btn => btn.addEventListener('click', function (e) {
         e.preventDefault();
         const list = document.querySelector('.temp-env-list[data-acc-index="' + this.dataset.accIndex + '"]');
         addDashboardEnvRow(list);
       }));
 
-      document.querySelectorAll('.temp-kv').forEach(input => input.addEventListener('input', function() {
+      document.querySelectorAll('.temp-kv').forEach(input => input.addEventListener('input', function () {
         const sel = document.querySelector('.temp-kv-action[data-acc-index="' + this.dataset.accIndex + '"]');
         if (sel) sel.disabled = !this.value.trim();
       }));
-      document.querySelectorAll('.account-checkbox').forEach(cb => cb.addEventListener('change', function() {
+      document.querySelectorAll('.account-checkbox').forEach(cb => cb.addEventListener('change', function () {
         const idx = this.dataset.accIndex;
         document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"], .group-checkbox[data-acc-index="' + idx + '"]').forEach(c => c.checked = this.checked);
       }));
-      document.querySelectorAll('.column-header').forEach(header => header.addEventListener('click', function(e) {
+      document.querySelectorAll('.column-header').forEach(header => header.addEventListener('click', function (e) {
         const cb = this.querySelector('.group-checkbox');
         if (e.target.tagName !== 'INPUT') cb.checked = !cb.checked;
         document.querySelectorAll('.normal-checkbox[data-acc-index="' + this.dataset.accIndex + '"][data-type="' + this.dataset.group + '"]').forEach(c => c.checked = cb.checked);
         checkAccountSync(this.dataset.accIndex);
       }));
-      document.querySelectorAll('.normal-checkbox').forEach(cb => cb.addEventListener('change', function() {
+      document.querySelectorAll('.normal-checkbox').forEach(cb => cb.addEventListener('change', function () {
         checkGroupSync(this.dataset.accIndex, this.dataset.type);
         checkAccountSync(this.dataset.accIndex);
       }));
@@ -1508,7 +1846,7 @@ function getDashboardPage() {
         const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]');
         const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]:checked');
         const gcb = document.querySelector('.group-checkbox[data-acc-index="' + idx + '"][data-group="' + type + '"]');
-        if(gcb) gcb.checked = (all.length > 0 && all.length === checked.length);
+        if (gcb) gcb.checked = (all.length > 0 && all.length === checked.length);
       }
       function checkAccountSync(idx) {
         const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]');
@@ -1521,9 +1859,9 @@ function getDashboardPage() {
     function renderProjects(projects, type, accIndex, account) {
       if (!projects || projects.length === 0) return '<div style="padding:10px 0; color:#cbd5e1; text-align:center; font-size:12px;">未附加项目</div>';
       return projects.map(proj => {
-        const bName = proj.kvBinding ? proj.kvBinding : '(原变量)';
+        const bName = proj.kvBinding ? proj.kvBinding : '(原KV变量)';
         const kvDisp = proj.kvName ? (bName + ' -> ' + proj.kvName + ' (' + (proj.kvAction === 'clear' ? '清空' : '保留') + ')') : '(留空/保留原有关系)';
-        
+
         let domainInfo = '';
         if (type === 'worker' && proj.subdomain && account.domain) {
           const fullDomain = proj.subdomain.trim() + '.' + account.domain.trim();
@@ -1553,8 +1891,8 @@ function getDashboardPage() {
       return Array.from(map.values());
     }
 
-    document.getElementById('btnDeploySelected').addEventListener('click', async function() {
-      const btn = this, output = document.getElementById('logOutput'), selected = [];
+    document.getElementById('btnDeploySelected').addEventListener('click', async function () {
+      const btn = this, output = document.getElementById('logOutput'), cfBox = document.getElementById('cfMonitorBox'), selected = [];
       document.querySelectorAll('.normal-checkbox:checked, .temp-checkbox:checked').forEach(cb => {
         const accIndex = parseInt(cb.dataset.accIndex), account = allAccounts[accIndex];
         if (cb.classList.contains('temp-checkbox')) {
@@ -1572,12 +1910,14 @@ function getDashboardPage() {
         }
       });
       if (selected.length === 0) return alert('请先勾选需要部署的项目');
-      
+
       btn.disabled = true; output.value = '开始批量部署...\\n';
-      
+      cfBox.innerHTML = ''; cfBox.classList.remove('active');
+      const enabledCfItems = [];
+
       for (let i = 0; i < selected.length; i++) {
         const item = selected[i];
-        output.value += '\\n[' + (i+1) + '/' + selected.length + '] ' + item.account.identifier + ' <- ' + item.proj.name + '\\n';
+        output.value += '\\n[' + (i + 1) + '/' + selected.length + '] ' + item.account.identifier + ' <- ' + item.proj.name + '\\n';
         output.scrollTop = output.scrollHeight;
         try {
           const currentAccIndex = allAccounts.indexOf(item.account);
@@ -1599,20 +1939,35 @@ function getDashboardPage() {
             customDomain = item.proj.subdomain.trim() + '.' + item.account.domain.trim();
           }
 
-          const payload = { 
-            type: item.type, id: item.account.accountId, token: item.account.token, 
+          const accCfEnabled = item.account.cfDomain === true;
+          const payload = {
+            type: item.type, id: item.account.accountId, token: item.account.token,
             kvBinding: item.proj.kvBinding || '',
-            kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep', 
+            kv: item.proj.kvName || '', kvAction: item.proj.kvAction || 'keep',
             name: item.proj.name, source: item.proj.codeUrl || 'default',
             envs: finalEnvs,
-            customDomain: customDomain
+            customDomain: customDomain,
+            subdomain: item.proj.subdomain || '',
+            cfDomain: accCfEnabled,
+            serverLabel: item.account.identifier + ' (' + item.account.accountId + ')',
+            triggerSource: '常用部署'
           };
-          const res = await fetch('/api/deploy', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          const res = await fetch('/api/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           const data = await res.json();
           output.value += (data.logs || []).join('\\n') + '\\n';
+
+          if (item.type === 'worker' && accCfEnabled && data.success) {
+            enabledCfItems.push('[' + item.account.identifier + '] ' + item.proj.name + (data.cfDomain ? ' -> ' + data.cfDomain : ''));
+          }
         } catch (e) { output.value += '[错误] ' + e.message + '\\n'; }
         output.scrollTop = output.scrollHeight;
       }
+
+      if (enabledCfItems.length > 0) {
+        cfBox.innerHTML = '<b>🌐 已开启 CF域名（workers.dev：Production 开启 / Preview 关闭）：</b><br>' + enabledCfItems.map(escapeHtml).join('<br>');
+        cfBox.classList.add('active');
+      }
+
       output.value += '\\n========== 部署结束 ==========\\n';
       btn.disabled = false;
     });
@@ -1627,8 +1982,8 @@ function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户与项目设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
     .action-bar button { padding: 10px; font-size: 13px; }
-    
-    /* 三区折叠卡片样式 */
+
+    /* 三区与模块折叠卡片样式 */
     .zone-card { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; background: #fff; overflow: hidden; }
     .zone-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; background: #fafbfc; cursor: pointer; user-select: none; transition: 0.2s; }
     .zone-header:hover { background: #f1f2f6; }
@@ -1653,10 +2008,10 @@ function getAccountsPage() {
     .account-header-left { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     .account-header-left h3 { font-size: 15px; font-weight: 600; margin: 0; color: #1e293b; }
     .account-header-right { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
-    
+
     .project-list { display: none; padding: 15px; border-top: 1px solid var(--border); }
     .project-list.active { display: block; }
-    
+
     .project-detail { background: #fafbfc; border: 1px solid #eaedf1; padding: 10px 12px; margin: 6px 0; border-radius: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
     .project-detail:first-child { margin-top: 0; }
     .project-detail:last-child { margin-bottom: 0; }
@@ -1668,11 +2023,16 @@ function getAccountsPage() {
     .tag-pill.worker { background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; }
     .tag-pill.page { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
     .tag-pill.domain { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
+    .tag-pill.cf-on { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .tag-pill.cf-off { background: #f1f5f9; color: #64748b; }
 
     .attach-box { background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; max-height: 210px; overflow-y: auto; }
     .attach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
     .attach-item { display: flex; align-items: center; font-size: 13px; color: #334155; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: #fff; border: 1px solid #eaedf1; }
     .attach-item:hover { border-color: var(--primary); }
+
+    .prefix-manage-row { display: flex; gap: 6px; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; }
+    .prefix-manage-row input { flex: 1; padding: 7px 10px !important; font-size: 12px !important; background: #fff !important; }
 
     .form-group { margin-bottom: 12px; }
     label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 5px; color: #475569; }
@@ -1682,7 +2042,7 @@ function getAccountsPage() {
   <div class="container">
     <div class="card">
       <h2>⚙️ 账户与项目配置管理</h2>
-      
+
       <div class="action-bar">
         <button id="btnBackup" class="btn-primary" style="background:#10b981;">📦 备份配置</button>
         <button id="btnShowRestore" class="btn-primary" style="background:#f59e0b;">⏪ 恢复配置</button>
@@ -1732,21 +2092,49 @@ function getAccountsPage() {
           <div id="globalPageList"></div>
         </div>
       </div>
-      
-      <!-- 缺省地址前缀模块 -->
-      <div class="zone-card" style="margin-bottom: 0; padding: 16px 18px;">
-        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: #1e293b;">🔗 缺省地址前缀</h3>
-        <div style="display:flex; align-items:center; gap:10px;">
-           <input type="text" id="sysDefaultPrefix" readonly placeholder="例如: https://raw.githubusercontent.com/用户名/库名/main/" style="background:#f1f5f9; flex:1;">
-           <button id="btnEditPrefix" class="btn-icon" style="color:var(--primary); flex-shrink:0;">${ICONS.edit}</button>
-           <button id="btnSavePrefix" class="btn-primary" style="display:none; padding:8px 16px; flex-shrink:0;">保存</button>
+
+      <!-- ==================== 缺省地址前缀模块（先收缩，点击展开，再点收回） ==================== -->
+      <div class="zone-card" style="margin-bottom: 0;">
+        <div class="zone-header" data-zone="zonePrefixBody">
+          <div class="zone-title">🔗 缺省地址前缀 <span class="zone-badge" id="prefixCountBadge">0 个</span></div>
+          <div class="zone-header-right">
+            <span class="zone-arrow">▼</span>
+          </div>
         </div>
-        <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height: 1.5;">部署时，若填写的源地址未以 http/https 开头，将自动在前面拼接此前缀。<br>提示：为了防止误改导致所有部署失败，请点击编辑图标进行修改，并注意确保末尾包含 / 等正确的拼接符。</p>
+        <div id="zonePrefixBody" class="zone-body">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <select id="sysDefaultPrefixSelect" style="flex:1;">
+              <option value="">（无缺省前缀）</option>
+            </select>
+            <button id="btnOpenPrefixModal" class="btn-primary" style="padding: 9px 14px; font-size: 13px; flex-shrink: 0;">⚙️ 设置</button>
+          </div>
+          <p style="font-size:12px; color:#94a3b8; margin-top:8px; line-height: 1.5;">
+            部署时，若填写的源地址未以 http/https 开头，将自动在前面拼接当前选中的缺省前缀。<br>
+            点击右侧“设置”可对前缀进行新增、修改、删除与排序；新增或保存前缀时，若末尾不是 "/" 将自动补充。
+          </p>
+        </div>
       </div>
 
       <div class="nav-links">
         <a href="/dashboard">📋 常用部署</a>
+        <a href="/records">📜 部署记录</a>
         <a href="/">🏠 返回主页</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 缺省地址前缀设置弹窗 -->
+  <div id="prefixModal" class="modal">
+    <div class="modal-content" style="max-width: 560px;">
+      <h3 style="margin-bottom:14px; font-size:16px;">🔗 缺省地址前缀设置</h3>
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <input type="text" id="newPrefixInput" placeholder="输入前缀，如 https://raw.githubusercontent.com/用户/库/main（未填末尾/将自动补充）" style="flex:1;">
+        <button id="btnAddPrefixItem" class="btn-primary" style="padding:0 14px; font-size:13px; flex-shrink:0;">➕ 添加</button>
+      </div>
+      <div id="prefixManageList" style="max-height: 300px; overflow-y: auto;"></div>
+      <div style="display:flex; gap:10px; margin-top:18px;">
+        <button id="btnSavePrefixModal" class="btn-primary" style="flex:1; padding:10px;">保存设置</button>
+        <button id="btnCancelPrefixModal" class="btn-danger" style="flex:1; padding:10px; background:#f1f5f9; color:#475569;">取消</button>
       </div>
     </div>
   </div>
@@ -1765,6 +2153,14 @@ function getAccountsPage() {
       </div>
       <div class="form-group"><label>组项目域名（可选，用于拼接 Worker 自定义子域）</label><input type="text" id="editDomain" placeholder="例如：example.com（无需填 http://）"></div>
 
+      <!-- 服务器下方可选框：CF域名 -->
+      <div class="form-group" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
+        <label style="display:flex; align-items:center; cursor:pointer; color:#1e293b; margin-bottom:2px;">
+          <input type="checkbox" id="editCfDomain"> CF域名
+        </label>
+        <div style="font-size:11px; color:#64748b; padding-left:22px;">选取后开启 CF 提供的 workers.dev 域名（Production 开启与 Preview 关闭），否则关闭 workers.dev 域名（Production 与 Preview 都关闭）。</div>
+      </div>
+
       <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
         <label style="color:#334155; margin-bottom:5px;">默认组环境变量 (ENV) <span style="font-size:11px;color:#94a3b8;font-weight:normal;">会在常用部署页面自动加载</span></label>
         <div id="accEnvList" style="display:flex; flex-direction:column; gap:6px;"></div>
@@ -1782,7 +2178,7 @@ function getAccountsPage() {
       </div>
 
       <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="editAccountShow" checked> 在常用部署页显示此服务器组</label></div>
-      
+
       <div style="display:flex; gap:10px; margin-top:20px;">
         <button id="btnSave" class="btn-primary" style="flex:1; padding:10px;">保存</button>
         <button id="btnCancel" class="btn-danger" style="flex:1; padding:10px; background:#f1f5f9; color:#475569;">取消</button>
@@ -1792,16 +2188,16 @@ function getAccountsPage() {
 
   <!-- 第二区 & 第三区：全局 Worker / Pages 项目配置弹窗 -->
   <div id="projModal" class="modal">
-    <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-content" style="max-width: 620px;">
       <h3 id="projModalTitle" style="margin-bottom:15px; font-size:16px;">配置项目</h3>
       <div class="form-group"><label>项目名称（Worker 脚本名 / Pages 项目名）</label><input type="text" id="pName" placeholder="例如：my-app"></div>
-      <div class="form-group" style="display:flex; gap:10px; align-items:flex-end;">
-        <div style="width:140px;"><label>KV 变量名（可选）</label><input type="text" id="pKvBinding" placeholder="留空保留原有关系"></div>
-        <div style="flex:1;"><label>KV 名称（命名空间，可选）</label><input type="text" id="pKvName" placeholder="留空保留原绑定"></div>
-        <div style="width:90px;"><select id="pKvAction" disabled><option value="keep">保留</option><option value="clear">清空</option></select></div>
+      <div class="form-group" style="display:flex; gap:8px; align-items:flex-end;">
+        <div style="flex: 1 1 0; min-width: 0;"><label>KV变量</label><input type="text" id="pKvBinding" placeholder="留空保留原有关系"></div>
+        <div style="flex: 1 1 0; min-width: 0;"><label>KV仓库</label><input type="text" id="pKvName" placeholder="留空保留原绑定"></div>
+        <div style="width: 72px; flex-shrink: 0;"><select id="pKvAction" disabled style="padding: 10px 6px;"><option value="keep">保留</option><option value="clear">清空</option></select></div>
       </div>
       <div class="form-group"><label id="pUrlLabel">代码源 / ZIP 地址</label><input type="text" id="pCodeUrl" placeholder="留空使用默认源，或填写相对路径/完整URL"></div>
-      
+
       <div class="form-group" id="pSubdomainWrap">
         <label>自定义子域名（可选，仅 Worker 生效）</label>
         <input type="text" id="pSubdomain" placeholder="例如：api（部署时自动拼接为 api.该组项目域名）">
@@ -1844,18 +2240,27 @@ function getAccountsPage() {
     let workerProjects = [];
     let pageProjects = [];
     let sysDefaultPrefix = "";
+    let prefixList = [];
+    let draftPrefixes = [];
     let editingIdentifier = null;
     let editingProjType = 'worker';
     let editingProjId = null;
 
-    // 记录三区以及“隐藏的项目”标签当前的展开状态（默认全部收起）
+    // 默认全部收缩（先收缩，点击展开，再点收回）
     const collapseState = {
       zone1Body: false,
       zone2Body: false,
       zone3Body: false,
+      zonePrefixBody: false,
       hiddenWorker: false,
       hiddenPage: false
     };
+
+    function ensureTrailingSlash(val) {
+      const s = String(val || '').trim();
+      if (!s) return '';
+      return s.endsWith('/') ? s : s + '/';
+    }
 
     function setZoneExpanded(zoneId, expanded) {
       const body = document.getElementById(zoneId);
@@ -1871,29 +2276,46 @@ function getAccountsPage() {
       }
     }
 
-    // 绑定三区标题栏点击展开/收起事件
     document.querySelectorAll('.zone-header').forEach(header => {
-      header.addEventListener('click', function(e) {
+      header.addEventListener('click', function (e) {
         if (e.target.closest('button')) return;
         const zoneId = this.dataset.zone;
         setZoneExpanded(zoneId, !collapseState[zoneId]);
       });
     });
 
+    function renderPrefixDropdown() {
+      const sel = document.getElementById('sysDefaultPrefixSelect');
+      const badge = document.getElementById('prefixCountBadge');
+      if (badge) badge.textContent = prefixList.length + ' 个';
+      if (!sel) return;
+      sel.innerHTML = '<option value="">（无缺省前缀）</option>';
+      prefixList.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        if (p === sysDefaultPrefix) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
     async function loadAccounts() {
       const res = await fetch('/api/accounts');
       const data = await res.json();
-      if (data.success) { 
-        accounts = data.accounts || []; 
+      if (data.success) {
+        accounts = data.accounts || [];
         workerProjects = data.workerProjects || [];
         pageProjects = data.pageProjects || [];
-        sysDefaultPrefix = data.defaultPrefix || "";
-        const prefInput = document.getElementById('sysDefaultPrefix');
-        if(prefInput) prefInput.value = sysDefaultPrefix;
-        renderAll(); 
+        prefixList = Array.isArray(data.prefixes) ? data.prefixes.map(ensureTrailingSlash).filter(Boolean) : [];
+        sysDefaultPrefix = ensureTrailingSlash(data.defaultPrefix || "");
+        if (sysDefaultPrefix && !prefixList.includes(sysDefaultPrefix)) {
+          prefixList.unshift(sysDefaultPrefix);
+        }
+        renderPrefixDropdown();
+        renderAll();
       }
     }
-    
+
     async function saveAccountsOrder() {
       await fetch('/api/accounts/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accounts }) });
       renderAccounts();
@@ -1908,8 +2330,8 @@ function getAccountsPage() {
       return await res.json();
     }
 
-    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text||''; return div.innerHTML; }
-    function moveArrItem(arr, idx, dir) { const t = idx+dir; if(t<0||t>=arr.length) return false; [arr[idx], arr[t]] = [arr[t], arr[idx]]; return true; }
+    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text || ''; return div.innerHTML; }
+    function moveArrItem(arr, idx, dir) { const t = idx + dir; if (t < 0 || t >= arr.length) return false; [arr[idx], arr[t]] = [arr[t], arr[idx]]; return true; }
 
     function renderAll() {
       document.getElementById('zone1Count').textContent = accounts.length + ' 组';
@@ -1925,18 +2347,21 @@ function getAccountsPage() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
       if (accounts.length === 0) { container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:10px 0;">暂无服务器组，请点击右上角添加。</p>'; return; }
-      
+
       accounts.forEach((acc, accIdx) => {
         const div = document.createElement('div'); div.className = 'account-item';
         const hideTag = acc.show === false ? '<span style="color:#ef4444;font-size:12px;font-weight:normal;">[隐藏]</span>' : '';
         const domainTag = acc.domain ? '<span class="tag-pill domain">' + escapeHtml(acc.domain) + '</span>' : '';
-        const disUp = accIdx===0?'disabled':'', disDn = accIdx===accounts.length-1?'disabled':'';
-        
+        const cfTag = acc.cfDomain === true
+          ? '<span class="tag-pill cf-on">CF域名: 开启(Prod开/Prev关)</span>'
+          : '<span class="tag-pill cf-off">CF域名: 关闭</span>';
+        const disUp = accIdx === 0 ? 'disabled' : '', disDn = accIdx === accounts.length - 1 ? 'disabled' : '';
+
         const attachedW = (acc.attachedWorkers || []).map(id => workerProjects.find(w => w.id === id)).filter(Boolean);
         const attachedP = (acc.attachedPages || []).map(id => pageProjects.find(p => p.id === id)).filter(Boolean);
 
         let htmlStr = '<div class="account-header">' +
-          '<div class="account-header-left"><h3>' + escapeHtml(acc.identifier) + '</h3>' + hideTag + domainTag + '</div>' +
+          '<div class="account-header-left"><h3>' + escapeHtml(acc.identifier) + '</h3>' + hideTag + domainTag + cfTag + '</div>' +
           '<div class="account-header-right">' +
             '<button class="btn-icon move-acc-up" ' + disUp + ' data-idx="' + accIdx + '">' + ICONS.up + '</button>' +
             '<button class="btn-icon move-acc-down" ' + disDn + ' data-idx="' + accIdx + '">' + ICONS.down + '</button>' +
@@ -1944,37 +2369,36 @@ function getAccountsPage() {
             '<button class="btn-icon delete-btn" data-id="' + escapeHtml(acc.identifier) + '" style="color:#ef4444">' + ICONS.del + '</button>' +
             '<span class="arrow" style="color:#94a3b8; font-size:12px; margin-left:8px;">▼</span>' +
           '</div></div><div class="project-list">';
-        
-        let summaryHtml = '<div style="font-size:12px; color:#64748b; margin-bottom:6px;"><b>Account ID:</b> ' + escapeHtml(acc.accountId) + ' | <b>组域名:</b> ' + escapeHtml(acc.domain || '未设置') + '</div>';
-        summaryHtml += '<div style="margin-bottom:6px;"><span style="font-size:12px; color:#475569; font-weight:500;">已附加 Workers (' + attachedW.length + ')：</span>' + 
+
+        let summaryHtml = '<div style="font-size:12px; color:#64748b; margin-bottom:6px;"><b>Account ID:</b> ' + escapeHtml(acc.accountId) + ' | <b>组域名:</b> ' + escapeHtml(acc.domain || '未设置') + ' | <b>CF域名:</b> ' + (acc.cfDomain === true ? '开启 (Production 开 / Preview 关)' : '关闭 (Production 关 / Preview 关)') + '</div>';
+        summaryHtml += '<div style="margin-bottom:6px;"><span style="font-size:12px; color:#475569; font-weight:500;">已附加 Workers (' + attachedW.length + ')：</span>' +
           (attachedW.length ? attachedW.map(w => '<span class="tag-pill worker">' + escapeHtml(w.name) + (w.subdomain && acc.domain ? ' (' + escapeHtml(w.subdomain + '.' + acc.domain) + ')' : '') + '</span>').join('') : '<span style="font-size:12px;color:#94a3b8;">无</span>') + '</div>';
-        summaryHtml += '<div><span style="font-size:12px; color:#475569; font-weight:500;">已附加 Pages (' + attachedP.length + ')：</span>' + 
+        summaryHtml += '<div><span style="font-size:12px; color:#475569; font-weight:500;">已附加 Pages (' + attachedP.length + ')：</span>' +
           (attachedP.length ? attachedP.map(p => '<span class="tag-pill page">' + escapeHtml(p.name) + '</span>').join('') : '<span style="font-size:12px;color:#94a3b8;">无</span>') + '</div>';
-        
+
         htmlStr += summaryHtml + '</div>';
         div.innerHTML = htmlStr;
         container.appendChild(div);
       });
 
-      document.querySelectorAll('#accountList .account-header').forEach(h => h.addEventListener('click', function(e){
+      document.querySelectorAll('#accountList .account-header').forEach(h => h.addEventListener('click', function (e) {
         if (e.target.closest('button')) return;
         const list = this.nextElementSibling;
         list.classList.toggle('active');
         const arrow = this.querySelector('.arrow');
         if (arrow) arrow.textContent = list.classList.contains('active') ? '▲' : '▼';
       }));
-      document.querySelectorAll('.move-acc-up').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if(moveArrItem(accounts, parseInt(b.dataset.idx), -1)) saveAccountsOrder(); }));
-      document.querySelectorAll('.move-acc-down').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if(moveArrItem(accounts, parseInt(b.dataset.idx), 1)) saveAccountsOrder(); }));
+      document.querySelectorAll('.move-acc-up').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if (moveArrItem(accounts, parseInt(b.dataset.idx), -1)) saveAccountsOrder(); }));
+      document.querySelectorAll('.move-acc-down').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); if (moveArrItem(accounts, parseInt(b.dataset.idx), 1)) saveAccountsOrder(); }));
       document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openEditAccount(b.dataset.id); }));
       document.querySelectorAll('.delete-btn').forEach(b => b.addEventListener('click', async e => {
         e.stopPropagation(); if (confirm('删除服务器组 ' + b.dataset.id + '？')) { await fetch('/api/accounts?identifier=' + encodeURIComponent(b.dataset.id), { method: 'DELETE' }); loadAccounts(); }
       }));
     }
 
-    // 构建单条项目 DOM 卡片
     function buildProjectDetailElement(p, originalIdx, totalLen, type) {
       const hTag = p.show === false ? '<span style="color:#ef4444">[隐藏]</span> ' : '';
-      const bName = p.kvBinding ? p.kvBinding : '(原变量)';
+      const bName = p.kvBinding ? p.kvBinding : '(原KV变量)';
       const kvInfo = p.kvName ? ('KV: ' + bName + ' -> ' + p.kvName + (p.kvAction === 'clear' ? '(清)' : '')) : '保留原KV关系';
       const subInfo = (type === 'worker' && p.subdomain) ? (' | 子域: <span style="color:#10b981;">' + escapeHtml(p.subdomain) + '</span>') : '';
       const envCount = (p.envs || []).filter(e => e.name).length;
@@ -1983,7 +2407,7 @@ function getAccountsPage() {
 
       const div = document.createElement('div');
       div.className = 'project-detail';
-      div.innerHTML = 
+      div.innerHTML =
         '<div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b><br>' +
           '<span style="font-size:11px;">' + escapeHtml(kvInfo) + subInfo + envInfo + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span>' +
         '</div>' +
@@ -1996,7 +2420,7 @@ function getAccountsPage() {
       return div;
     }
 
-    // ==================== 渲染第二区 & 第三区：全局项目列表（含“隐藏的项目”独立折叠） ====================
+    // ==================== 渲染第二区 & 第三区：全局项目列表 ====================
     function renderGlobalProjects(type) {
       const list = type === 'worker' ? workerProjects : pageProjects;
       const container = document.getElementById(type === 'worker' ? 'globalWorkerList' : 'globalPageList');
@@ -2025,7 +2449,6 @@ function getAccountsPage() {
         });
       }
 
-      // 若存在隐藏的项目，渲染可点击展开/收起的“隐藏的项目”折叠栏
       if (hiddenItems.length > 0) {
         const stateKey = type === 'worker' ? 'hiddenWorker' : 'hiddenPage';
         const isExpanded = !!collapseState[stateKey];
@@ -2078,66 +2501,163 @@ function getAccountsPage() {
       }));
     }
 
-    /* 前缀修改保存逻辑 */
-    document.getElementById('btnEditPrefix').addEventListener('click', function() {
-       const input = document.getElementById('sysDefaultPrefix');
-       input.readOnly = false;
-       input.style.background = '#fff';
-       input.focus();
-       this.style.display = 'none';
-       document.getElementById('btnSavePrefix').style.display = 'inline-flex';
+    /* 缺省前缀下拉切换与设置弹窗逻辑 */
+    document.getElementById('sysDefaultPrefixSelect').addEventListener('change', async function () {
+      const selectedVal = ensureTrailingSlash(this.value);
+      sysDefaultPrefix = selectedVal;
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultPrefix: selectedVal, prefixes: prefixList })
+      });
+      const data = await res.json();
+      if (!data.success) alert('切换前缀失败');
     });
 
-    document.getElementById('btnSavePrefix').addEventListener('click', async function() {
-       const val = document.getElementById('sysDefaultPrefix').value.trim();
-       const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ defaultPrefix: val }) });
-       const data = await res.json();
-       if(data.success) {
-          const input = document.getElementById('sysDefaultPrefix');
-          input.readOnly = true;
-          input.style.background = '#f1f5f9';
-          this.style.display = 'none';
-          document.getElementById('btnEditPrefix').style.display = 'inline-flex';
-       } else alert('保存失败');
+    function renderPrefixManageList() {
+      const box = document.getElementById('prefixManageList');
+      box.innerHTML = '';
+      if (!draftPrefixes.length) {
+        box.innerHTML = '<div style="text-align:center; color:#94a3b8; font-size:12px; padding:12px;">暂无前缀，请在上方输入后点击“添加”。</div>';
+        return;
+      }
+      draftPrefixes.forEach((p, idx) => {
+        const row = document.createElement('div');
+        row.className = 'prefix-manage-row';
+        const disUp = idx === 0 ? 'disabled' : '';
+        const disDn = idx === draftPrefixes.length - 1 ? 'disabled' : '';
+        row.innerHTML =
+          '<input type="text" class="draft-prefix-input" data-idx="' + idx + '" value="' + escapeHtml(p) + '">' +
+          '<button type="button" class="btn-icon pm-up" ' + disUp + ' data-idx="' + idx + '" title="上移">' + ICONS.up + '</button>' +
+          '<button type="button" class="btn-icon pm-dn" ' + disDn + ' data-idx="' + idx + '" title="下移">' + ICONS.down + '</button>' +
+          '<button type="button" class="btn-icon pm-del" data-idx="' + idx + '" style="color:#ef4444" title="删除">' + ICONS.del + '</button>';
+        box.appendChild(row);
+      });
+
+      box.querySelectorAll('.draft-prefix-input').forEach(inp => {
+        inp.addEventListener('change', function () {
+          const i = parseInt(this.dataset.idx);
+          const norm = ensureTrailingSlash(this.value);
+          this.value = norm;
+          draftPrefixes[i] = norm;
+        });
+      });
+      box.querySelectorAll('.pm-up').forEach(btn => {
+        btn.addEventListener('click', () => {
+          syncDraftInputsFromDom();
+          if (moveArrItem(draftPrefixes, parseInt(btn.dataset.idx), -1)) renderPrefixManageList();
+        });
+      });
+      box.querySelectorAll('.pm-dn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          syncDraftInputsFromDom();
+          if (moveArrItem(draftPrefixes, parseInt(btn.dataset.idx), 1)) renderPrefixManageList();
+        });
+      });
+      box.querySelectorAll('.pm-del').forEach(btn => {
+        btn.addEventListener('click', () => {
+          syncDraftInputsFromDom();
+          draftPrefixes.splice(parseInt(btn.dataset.idx), 1);
+          renderPrefixManageList();
+        });
+      });
+    }
+
+    function syncDraftInputsFromDom() {
+      const inputs = document.querySelectorAll('#prefixManageList .draft-prefix-input');
+      if (inputs.length === draftPrefixes.length) {
+        draftPrefixes = Array.from(inputs).map(el => ensureTrailingSlash(el.value)).filter(Boolean);
+      }
+    }
+
+    document.getElementById('btnOpenPrefixModal').addEventListener('click', function (e) {
+      e.stopPropagation();
+      draftPrefixes = [...prefixList];
+      document.getElementById('newPrefixInput').value = '';
+      renderPrefixManageList();
+      document.getElementById('prefixModal').classList.add('active');
+    });
+
+    document.getElementById('btnAddPrefixItem').addEventListener('click', function () {
+      syncDraftInputsFromDom();
+      const raw = document.getElementById('newPrefixInput').value.trim();
+      if (!raw) return alert('请输入前缀地址');
+      const norm = ensureTrailingSlash(raw);
+      if (!draftPrefixes.includes(norm)) {
+        draftPrefixes.push(norm);
+      }
+      document.getElementById('newPrefixInput').value = '';
+      renderPrefixManageList();
+    });
+
+    document.getElementById('newPrefixInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('btnAddPrefixItem').click();
+      }
+    });
+
+    document.getElementById('btnCancelPrefixModal').addEventListener('click', () => {
+      document.getElementById('prefixModal').classList.remove('active');
+    });
+
+    document.getElementById('btnSavePrefixModal').addEventListener('click', async function () {
+      syncDraftInputsFromDom();
+      const cleaned = draftPrefixes.map(ensureTrailingSlash).filter(Boolean);
+      const nextDefault = cleaned.includes(sysDefaultPrefix) ? sysDefaultPrefix : (cleaned[0] || '');
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefixes: cleaned, defaultPrefix: nextDefault })
+      });
+      const data = await res.json();
+      if (data.success) {
+        prefixList = data.prefixes || cleaned;
+        sysDefaultPrefix = data.defaultPrefix ?? nextDefault;
+        renderPrefixDropdown();
+        document.getElementById('prefixModal').classList.remove('active');
+      } else {
+        alert('保存失败');
+      }
     });
 
     /* 备份恢复逻辑 */
     document.getElementById('btnBackup').addEventListener('click', async () => {
-      if(!confirm('备份当前所有配置到 KV？')) return;
+      if (!confirm('备份当前所有配置到 KV？')) return;
       const data = await (await fetch('/api/accounts/backup', { method: 'POST' })).json();
       alert(data.success ? '✅ 成功！文件名: ' + data.key : '❌ 失败');
     });
     document.getElementById('btnExport').addEventListener('click', () => window.location.href = '/api/accounts/export');
     document.getElementById('btnShowRestore').addEventListener('click', async () => {
       const data = await (await fetch('/api/accounts/backup')).json();
-      if(!data.success || !data.backups.length) return alert('未找到备份');
+      if (!data.success || !data.backups.length) return alert('未找到备份');
       const sel = document.getElementById('backupSelect'); sel.innerHTML = '';
       data.backups.sort().reverse().forEach(b => sel.appendChild(new Option(b, b)));
       document.getElementById('restoreModal').classList.add('active');
     });
     document.getElementById('btnConfirmRestore').addEventListener('click', async () => {
-      const key = document.getElementById('backupSelect').value; if(!key || !confirm('将覆盖所有配置！确认？')) return;
-      const data = await (await fetch('/api/accounts/restore', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ key }) })).json();
-      if(data.success) { alert('✅ 恢复成功'); document.getElementById('restoreModal').classList.remove('active'); loadAccounts(); }
+      const key = document.getElementById('backupSelect').value; if (!key || !confirm('将覆盖所有配置！确认？')) return;
+      const data = await (await fetch('/api/accounts/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })).json();
+      if (data.success) { alert('✅ 恢复成功'); document.getElementById('restoreModal').classList.remove('active'); loadAccounts(); }
     });
     document.getElementById('btnCancelRestore').addEventListener('click', () => document.getElementById('restoreModal').classList.remove('active'));
     document.getElementById('btnImport').addEventListener('click', () => document.getElementById('importFile').click());
-    document.getElementById('importFile').addEventListener('change', function(e) {
-      const file = e.target.files[0]; if(!file) return;
+    document.getElementById('importFile').addEventListener('change', function (e) {
+      const file = e.target.files[0]; if (!file) return;
       const reader = new FileReader();
       reader.onload = async e => {
         try {
           const json = JSON.parse(e.target.result);
-          if(!confirm('将导入并覆盖配置！确认？')) return;
-          const data = await (await fetch('/api/accounts/import', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(json) })).json();
-          if(data.success) { alert('✅ 导入成功'); loadAccounts(); } else alert('❌ 失败');
-        } catch(err) { alert('⚠️ JSON 解析失败'); }
+          if (!confirm('将导入并覆盖配置！确认？')) return;
+          const data = await (await fetch('/api/accounts/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(json) })).json();
+          if (data.success) { alert('✅ 导入成功'); loadAccounts(); } else alert('❌ 失败');
+        } catch (err) { alert('⚠️ JSON 解析失败'); }
         document.getElementById('importFile').value = '';
       }; reader.readAsText(file);
     });
 
     /* 通用 ENV 行构建函数 */
-    function buildEnvRow(containerId, name='', value='', action='keep') {
+    function buildEnvRow(containerId, name = '', value = '', action = 'keep') {
       const div = document.createElement('div');
       div.className = 'env-row-item';
       div.style.cssText = 'display:flex; gap:6px; align-items:center;';
@@ -2145,8 +2665,8 @@ function getAccountsPage() {
         <input type="text" class="e-name" placeholder="变量名" value="\${escapeHtml(name)}" style="flex:2; padding:6px; font-size:12px;">
         <input type="text" class="e-val" placeholder="变量值" value="\${escapeHtml(value)}" style="flex:3; padding:6px; font-size:12px;">
         <select class="e-act" style="flex:1; padding:6px; font-size:12px;">
-          <option value="keep" \${action==='keep'?'selected':''}>保留</option>
-          <option value="replace" \${action==='replace'?'selected':''}>替换</option>
+          <option value="keep" \${action === 'keep' ? 'selected' : ''}>保留</option>
+          <option value="replace" \${action === 'replace' ? 'selected' : ''}>替换</option>
         </select>
         <span class="r-env" style="color:#ef4444; cursor:pointer; font-size:14px; padding:4px;" title="删除">✖</span>
       \`;
@@ -2156,7 +2676,6 @@ function getAccountsPage() {
     document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('accEnvList'); });
     document.getElementById('btnAddProjEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('projEnvList'); });
 
-    /* 渲染服务器组编辑弹窗内的项目勾选框（同样将隐藏项目归入折叠区） */
     function renderSingleAttachBox(boxId, list, selectedIds, cbClass, emptyText) {
       const box = document.getElementById(boxId);
       box.innerHTML = '';
@@ -2227,12 +2746,13 @@ function getAccountsPage() {
       document.getElementById('editAccountId').value = '';
       document.getElementById('editToken').value = '';
       document.getElementById('editDomain').value = '';
+      document.getElementById('editCfDomain').checked = false;
       document.getElementById('accEnvList').innerHTML = '';
       document.getElementById('editAccountShow').checked = true;
       renderAttachGrids([], []);
       document.getElementById('editModal').classList.add('active');
     }
-    
+
     function openEditAccount(id) {
       const acc = accounts.find(a => a.identifier === id); if (!acc) return;
       editingIdentifier = id;
@@ -2241,10 +2761,11 @@ function getAccountsPage() {
       document.getElementById('editAccountId').value = acc.accountId;
       document.getElementById('editToken').value = acc.token;
       document.getElementById('editDomain').value = acc.domain || '';
-      
-      document.getElementById('accEnvList').innerHTML = ''; 
-      (acc.envs||[]).forEach(e => buildEnvRow('accEnvList', e.name, e.value, e.action));
-      
+      document.getElementById('editCfDomain').checked = acc.cfDomain === true;
+
+      document.getElementById('accEnvList').innerHTML = '';
+      (acc.envs || []).forEach(e => buildEnvRow('accEnvList', e.name, e.value, e.action));
+
       document.getElementById('editAccountShow').checked = acc.show !== false;
       renderAttachGrids(acc.attachedWorkers || [], acc.attachedPages || []);
       document.getElementById('editModal').classList.add('active');
@@ -2255,14 +2776,15 @@ function getAccountsPage() {
       openAddAccount();
     });
     document.getElementById('btnCancel').addEventListener('click', () => document.getElementById('editModal').classList.remove('active'));
-    
+
     document.getElementById('btnSave').addEventListener('click', async () => {
       const identifier = document.getElementById('editIdentifier').value.trim();
       const accountId = document.getElementById('editAccountId').value.trim();
       const token = document.getElementById('editToken').value.trim();
       const domain = document.getElementById('editDomain').value.trim();
+      const cfDomain = document.getElementById('editCfDomain').checked;
       if (!identifier || !accountId || !token) return alert('标识、Account ID 和 Token 不能为空');
-      
+
       const getEnvs = (cid) => Array.from(document.querySelectorAll('#' + cid + ' .env-row-item')).map(el => ({
         name: el.querySelector('.e-name').value.trim(),
         value: el.querySelector('.e-val').value.trim(),
@@ -2271,16 +2793,16 @@ function getAccountsPage() {
 
       const attachedWorkers = Array.from(document.querySelectorAll('.att-w-cb:checked')).map(cb => cb.value);
       const attachedPages = Array.from(document.querySelectorAll('.att-p-cb:checked')).map(cb => cb.value);
-      
-      const payload = { 
-        identifier, accountId, token, domain,
-        show: document.getElementById('editAccountShow').checked, 
+
+      const payload = {
+        identifier, accountId, token, domain, cfDomain,
+        show: document.getElementById('editAccountShow').checked,
         envs: getEnvs('accEnvList'),
         attachedWorkers,
         attachedPages
       };
-      
-      const data = await (await fetch('/api/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json();
+
+      const data = await (await fetch('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).json();
       if (data.success) {
         document.getElementById('editModal').classList.remove('active');
         setZoneExpanded('zone1Body', true);
@@ -2289,7 +2811,7 @@ function getAccountsPage() {
     });
 
     /* 第二区 & 第三区：全局项目新增/编辑弹窗 */
-    document.getElementById('pKvName').addEventListener('input', function() {
+    document.getElementById('pKvName').addEventListener('input', function () {
       document.getElementById('pKvAction').disabled = !this.value.trim();
     });
 
@@ -2381,8 +2903,198 @@ function getAccountsPage() {
         alert('保存失败');
       }
     });
-    
+
     loadAccounts();
+  </script>
+</body></html>`;
+}
+
+// ==================== 部署记录页面 ====================
+function getRecordsPage() {
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>部署记录</title><style>${GLOBAL_STYLE}
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .filter-group { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+    .filter-group input, .filter-group select { width: auto; min-width: 130px; padding: 8px 12px; }
+    .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1120px; }
+    th, td { padding: 10px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: top; word-break: break-all; }
+    th { background: #f8fafc; color: #334155; font-weight: 600; white-space: nowrap; }
+    tr:hover td { background: #fafbfc; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .badge-ok { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .badge-err { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .badge-w { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+    .badge-p { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
+    .log-btn { padding: 4px 8px; font-size: 11px; background: #f1f5f9; color: #334155; border-radius: 5px; white-space: nowrap; }
+    .log-btn:hover { background: #e2e8f0; }
+  </style></head><body>
+  <div class="container" style="max-width: 1200px;">
+    <div class="card">
+      <h2>📜 部署记录</h2>
+
+      <div class="toolbar">
+        <div class="filter-group">
+          <input type="text" id="filterKeyword" placeholder="搜索项目名/服务器/域名/来源...">
+          <select id="filterStatus">
+            <option value="">全部状态</option>
+            <option value="成功">成功</option>
+            <option value="失败">失败</option>
+          </select>
+          <select id="filterMethod">
+            <option value="">全部方式</option>
+            <option value="Worker">Worker</option>
+            <option value="Pages">Pages</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="btnRefreshRecords" class="btn-primary" style="padding:8px 14px; font-size:12px;">🔄 刷新</button>
+          <button id="btnClearRecords" class="btn-danger" style="padding:8px 14px; font-size:12px;">🗑️ 清空记录</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>部署时间</th>
+              <th>部署状态</th>
+              <th>服务器</th>
+              <th>部署方式</th>
+              <th>项目名称</th>
+              <th>KV变量</th>
+              <th>KV仓库</th>
+              <th>ENV变量</th>
+              <th>ENV值</th>
+              <th>子域名</th>
+              <th>CF域名</th>
+              <th>项目来源</th>
+              <th>耗时/来源</th>
+              <th>日志</th>
+            </tr>
+          </thead>
+          <tbody id="recordsTbody">
+            <tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:24px;">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="nav-links">
+        <a href="/dashboard">📋 常用部署</a>
+        <a href="/accounts">⚙️ 账户设置</a>
+        <a href="/">🏠 返回主页</a>
+        <a href="/logout" class="danger-link">🚪 退出登录</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="recordLogModal" class="modal">
+    <div class="modal-content">
+      <h3 id="recordLogTitle" style="margin-bottom:12px; font-size:16px;">部署日志详情</h3>
+      <textarea id="recordLogText" readonly style="height:320px;"></textarea>
+      <div style="margin-top:14px; text-align:right;">
+        <button id="btnCloseRecordLog" class="btn-primary" style="padding:8px 18px;">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allRecords = [];
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text == null ? '' : String(text);
+      return div.innerHTML;
+    }
+
+    async function loadRecords() {
+      const res = await fetch('/api/records');
+      const data = await res.json();
+      if (data.success) {
+        allRecords = data.records || [];
+        renderRecords();
+      } else {
+        document.getElementById('recordsTbody').innerHTML = '<tr><td colspan="14" style="text-align:center; color:#ef4444; padding:20px;">加载失败</td></tr>';
+      }
+    }
+
+    function renderRecords() {
+      const kw = document.getElementById('filterKeyword').value.trim().toLowerCase();
+      const st = document.getElementById('filterStatus').value;
+      const md = document.getElementById('filterMethod').value;
+
+      const filtered = allRecords.filter(r => {
+        if (st && r.status !== st) return false;
+        if (md && r.method !== md) return false;
+        if (kw) {
+          const hay = [
+            r.time, r.status, r.server, r.method, r.projectName,
+            r.kvVar, r.kvRepo, r.envVars, r.envValues, r.subdomain,
+            r.cfDomain, r.sourceUrl, r.triggerSource
+          ].join(' ').toLowerCase();
+          if (!hay.includes(kw)) return false;
+        }
+        return true;
+      });
+
+      const tbody = document.getElementById('recordsTbody');
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="14" style="text-align:center; color:#94a3b8; padding:24px;">暂无部署记录</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map((r, idx) => {
+        const statusBadge = r.status === '成功'
+          ? '<span class="badge badge-ok">成功</span>'
+          : '<span class="badge badge-err">' + escapeHtml(r.status || '失败') + '</span>';
+        const methodBadge = r.method === 'Worker'
+          ? '<span class="badge badge-w">Worker</span>'
+          : '<span class="badge badge-p">Pages</span>';
+        const metaExtra = [r.duration, r.triggerSource].filter(Boolean).join(' · ');
+
+        return '<tr>' +
+          '<td style="white-space:nowrap;">' + escapeHtml(r.time) + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td>' + escapeHtml(r.server || '-') + '</td>' +
+          '<td>' + methodBadge + '</td>' +
+          '<td><b>' + escapeHtml(r.projectName || '-') + '</b></td>' +
+          '<td>' + escapeHtml(r.kvVar || '-') + '</td>' +
+          '<td>' + escapeHtml(r.kvRepo || '-') + '</td>' +
+          '<td>' + escapeHtml(r.envVars || '-') + '</td>' +
+          '<td>' + escapeHtml(r.envValues || '-') + '</td>' +
+          '<td>' + escapeHtml(r.subdomain || '-') + '</td>' +
+          '<td>' + escapeHtml(r.cfDomain || '-') + '</td>' +
+          '<td>' + escapeHtml(r.sourceUrl || '-') + '</td>' +
+          '<td>' + escapeHtml(metaExtra || '-') + '</td>' +
+          '<td><button type="button" class="log-btn view-log-btn" data-idx="' + idx + '">查看</button></td>' +
+        '</tr>';
+      }).join('');
+
+      tbody.querySelectorAll('.view-log-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = filtered[parseInt(btn.dataset.idx)];
+          document.getElementById('recordLogTitle').textContent = '部署日志：' + (item.projectName || '') + ' (' + (item.time || '') + ')';
+          document.getElementById('recordLogText').value = (item.logs && item.logs.length) ? item.logs.join('\\n') : '无日志详情';
+          document.getElementById('recordLogModal').classList.add('active');
+        });
+      });
+    }
+
+    document.getElementById('filterKeyword').addEventListener('input', renderRecords);
+    document.getElementById('filterStatus').addEventListener('change', renderRecords);
+    document.getElementById('filterMethod').addEventListener('change', renderRecords);
+    document.getElementById('btnRefreshRecords').addEventListener('click', loadRecords);
+    document.getElementById('btnCloseRecordLog').addEventListener('click', () => {
+      document.getElementById('recordLogModal').classList.remove('active');
+    });
+    document.getElementById('btnClearRecords').addEventListener('click', async () => {
+      if (!confirm('确认清空全部部署记录？')) return;
+      const res = await fetch('/api/records', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) loadRecords();
+      else alert('清空失败');
+    });
+
+    loadRecords();
   </script>
 </body></html>`;
 }
