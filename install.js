@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.4.202611281612"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.5.202611282017"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -18,7 +18,6 @@ export default {
         authHeader === `Bearer ${expectedPassword}` ||
         queryPwd === expectedPassword;
 
-      // 处理登录表单提交
       if (path === "/login" && request.method === "POST") {
         const formData = await request.formData().catch(() => new FormData());
         const pass = formData.get("password");
@@ -34,7 +33,6 @@ export default {
         return new Response(getLoginPage("密码错误，请重试"), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
       }
 
-      // 处理退出登录
       if (path === "/logout") {
         return new Response("已退出", {
           status: 302,
@@ -45,7 +43,6 @@ export default {
         });
       }
 
-      // 未授权情况拦截
       if (!isAuthed) {
         if (path.startsWith("/api/")) {
           return new Response(JSON.stringify({ success: false, error: "未授权，请提供正确的密码或登录" }), {
@@ -57,7 +54,6 @@ export default {
     }
     // ======================================================
 
-    // API 路由
     if (path === "/api/deploy") {
       if (request.method === "POST") return handleUnifiedDeploy(request, env);
       if (request.method === "GET") return handleGetDeploy(url, env);
@@ -66,13 +62,11 @@ export default {
     if (path === "/api/deploy-pages" && request.method === "POST") return handleDeployPages(request, env);
     if (path === "/api/config" && request.method === "POST") return handleSaveConfig(request, env);
 
-    // === 部署记录 API ===
     if (path === "/api/records") {
       if (request.method === "GET") return handleGetRecords(env);
       if (request.method === "DELETE") return handleClearRecords(env);
     }
 
-    // === 账户与三区配置 API ===
     if (path === "/api/accounts") {
       if (request.method === "GET") return handleGetAccounts(env);
       if (request.method === "POST") return handlePostAccount(request, env);
@@ -87,12 +81,10 @@ export default {
         return new Response(JSON.stringify({ success: false }), { status: 500 });
       }
     }
-    // 保存全局 Worker / Pages 项目模板列表
     if (path === "/api/projects" && request.method === "POST") {
       return handleSaveGlobalProjects(request, env);
     }
 
-    // === 数据备份、恢复、导出、导入 API ===
     if (path === "/api/accounts/backup") {
       if (request.method === "GET") return handleListBackups(env);
       if (request.method === "POST") return handleCreateBackup(env);
@@ -101,7 +93,6 @@ export default {
     if (path === "/api/accounts/export" && request.method === "GET") return handleExportAll(env);
     if (path === "/api/accounts/import" && request.method === "POST") return handleImportAll(request, env);
 
-    // 页面路由
     if (path === "/" || path === "/index.html") return new Response(getMainPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/dashboard") return new Response(getDashboardPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
     if (path === "/accounts") return new Response(getAccountsPage(), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
@@ -131,7 +122,6 @@ function normalizePrefixSlash(prefix) {
   return s.endsWith("/") ? s : `${s}/`;
 }
 
-// 统一归一化多 KV 数组（兼容旧版单 KV 字段）
 function normalizeKvConfigs(kvs = [], kvName = "", kvAction = "keep", kvBinding = "") {
   const list = [];
   if (Array.isArray(kvs)) {
@@ -153,6 +143,18 @@ function normalizeKvConfigs(kvs = [], kvName = "", kvAction = "keep", kvBinding 
     });
   }
   return list;
+}
+
+function normalizeProjectGroups(groups = []) {
+  if (!Array.isArray(groups)) return [];
+  return groups
+    .filter(g => g && typeof g === "object")
+    .map((g, idx) => ({
+      id: String(g.id || `grp_${Date.now()}_${idx}`),
+      name: String(g.name || `分组 ${idx + 1}`).trim(),
+      workerIds: Array.from(new Set(Array.isArray(g.workerIds) ? g.workerIds.filter(Boolean) : [])),
+      pageIds: Array.from(new Set(Array.isArray(g.pageIds) ? g.pageIds.filter(Boolean) : []))
+    }));
 }
 
 async function fetchWithTimeout(url, options = {}, timeout = 15000) {
@@ -228,7 +230,6 @@ async function handleClearRecords(env) {
   }
 }
 
-// 获取账户所有 KV 命名空间映射表（id -> title）
 async function fetchAllKvNamespacesMap(accountId, headers) {
   const map = new Map();
   let page = 1;
@@ -256,7 +257,6 @@ async function fetchAllKvNamespacesMap(accountId, headers) {
   return map;
 }
 
-// 支持分页遍历（per_page=100）与忽略大小写的 KV 命名空间查找函数
 async function findKvNamespaceByTitle(accountId, headers, targetTitle) {
   const normalizedTarget = targetTitle.trim().toLowerCase();
   let page = 1;
@@ -278,7 +278,6 @@ async function findKvNamespaceByTitle(accountId, headers, targetTitle) {
   return null;
 }
 
-// 统一处理 KV 获取、保留或清空重建逻辑（含 10014 冲突兜底）
 async function resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, log) {
   let existing = await findKvNamespaceByTitle(accountId, headers, targetKvName);
   if (existing) {
@@ -308,7 +307,6 @@ async function resolveKvNamespaceId(accountId, headers, targetKvName, kvAction, 
   }
 }
 
-// 获取账户的 workers.dev 子域名（若存在）
 async function getWorkersSubdomain(accountId, headers) {
   try {
     const res = await fetchWithTimeout(
@@ -325,7 +323,6 @@ async function getWorkersSubdomain(accountId, headers) {
   return "";
 }
 
-// 查询 Worker 已绑定的全部自定义域名（Custom Domains）
 async function fetchWorkerBoundCustomDomains(accountId, headers, workerName) {
   try {
     const res = await fetchWithTimeout(
@@ -344,7 +341,6 @@ async function fetchWorkerBoundCustomDomains(accountId, headers, workerName) {
   return [];
 }
 
-// 查询 Pages 已绑定的全部自定义域名
 async function fetchPagesBoundCustomDomains(accountId, headers, projectName, fallbackDomains = []) {
   try {
     const res = await fetchWithTimeout(
@@ -372,7 +368,6 @@ async function fetchPagesBoundCustomDomains(accountId, headers, projectName, fal
   return [];
 }
 
-// 配置 Worker 的 workers.dev 域名状态
 async function configureWorkerDevDomain(accountId, headers, workerName, enableCfDomain, log) {
   const payload = enableCfDomain
     ? { enabled: true, previews_enabled: false }
@@ -410,7 +405,6 @@ async function configureWorkerDevDomain(accountId, headers, workerName, enableCf
   }
 }
 
-// 绑定 Worker 自定义域名（Custom Domains）
 async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, log) {
   const cleanHost = hostname.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
   if (!cleanHost || !cleanHost.includes('.')) {
@@ -473,7 +467,7 @@ async function bindWorkerCustomDomain(accountId, headers, workerName, hostname, 
 async function getStoredData(env) {
   try {
     const raw = await env.KV.get(ACCOUNTS_KEY);
-    if (!raw) return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "", prefixes: [] };
+    if (!raw) return { accounts: [], workerProjects: [], pageProjects: [], projectGroups: [], defaultPrefix: "", prefixes: [] };
     const parsed = JSON.parse(raw);
     let accounts = (parsed.accounts || []).map(a => ({
       ...a,
@@ -481,8 +475,8 @@ async function getStoredData(env) {
     }));
     let workerProjects = Array.isArray(parsed.workerProjects) ? parsed.workerProjects : [];
     let pageProjects = Array.isArray(parsed.pageProjects) ? parsed.pageProjects : [];
+    let projectGroups = normalizeProjectGroups(parsed.projectGroups || []);
 
-    // 兼容旧版数据结构
     const hasLegacy = accounts.some(a => (a.workers && a.workers.length > 0) || (a.pages && a.pages.length > 0));
     if (workerProjects.length === 0 && pageProjects.length === 0 && hasLegacy) {
       const wMap = new Map();
@@ -545,17 +539,13 @@ async function getStoredData(env) {
       accounts,
       workerProjects,
       pageProjects,
+      projectGroups,
       defaultPrefix: activePrefix,
       prefixes
     };
   } catch {
-    return { accounts: [], workerProjects: [], pageProjects: [], defaultPrefix: "", prefixes: [] };
+    return { accounts: [], workerProjects: [], pageProjects: [], projectGroups: [], defaultPrefix: "", prefixes: [] };
   }
-}
-
-async function getAccountsList(env) {
-  const data = await getStoredData(env);
-  return data.accounts;
 }
 
 // ==================== Worker 部署核心 ====================
@@ -1374,6 +1364,7 @@ async function handleSaveGlobalProjects(request, env) {
     const data = await getStoredData(env);
     if (Array.isArray(body.workerProjects)) data.workerProjects = body.workerProjects;
     if (Array.isArray(body.pageProjects)) data.pageProjects = body.pageProjects;
+    if (Array.isArray(body.projectGroups)) data.projectGroups = normalizeProjectGroups(body.projectGroups);
     await env.KV.put(ACCOUNTS_KEY, JSON.stringify(data));
     return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
   } catch (e) {
@@ -1474,7 +1465,7 @@ const GLOBAL_STYLE = `
     min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 15px;
     -webkit-font-smoothing: antialiased;
   }
-  .container { width: 100%; max-width: 980px; }
+  .container { width: 100%; max-width: 1060px; }
   .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 25px; }
   h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #1e293b; text-align: center; }
 
@@ -1510,7 +1501,7 @@ const GLOBAL_STYLE = `
 
   .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15,23,42,0.5); justify-content: center; align-items: center; z-index: 1000; padding: 15px; backdrop-filter: blur(2px); }
   .modal.active { display: flex; }
-  .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 750px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+  .modal-content { background: #fff; padding: 20px; border-radius: 12px; width: 100%; max-width: 780px; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
 
   .pwd-wrap { position: relative; display: flex; align-items: center; }
   .pwd-wrap input { padding-right: 36px !important; }
@@ -1525,7 +1516,6 @@ const ICONS = {
   del: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
 };
 
-// ==================== 前端共享逻辑 ====================
 const GLOBAL_SCRIPT = `
   function togglePwd(icon) {
     const input = icon.previousElementSibling;
@@ -1600,7 +1590,6 @@ function getMainPage() {
       </div>
       <div class="form-group"><label>项目名称</label><input type="text" id="projectName" placeholder="Worker或Pages名称"></div>
 
-      <!-- KV 设置区（参考 ENV 设置区，勾选才展开，支持多 KV 绑定） -->
       <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
         <label style="display:flex; align-items:center; cursor:pointer; color:#334155; margin-bottom:0;">
           <input type="checkbox" id="enableKv" style="margin-right:8px; width:auto;"> 附加 KV 绑定 (KV)
@@ -1611,7 +1600,6 @@ function getMainPage() {
         </div>
       </div>
 
-      <!-- ENV 设置区 -->
       <div class="form-group" style="border: 1px dashed #cbd5e1; padding: 10px; border-radius: 8px; margin-top: 10px; background:#fafbfc;">
         <label style="display:flex; align-items:center; cursor:pointer; color:#334155; margin-bottom:0;">
           <input type="checkbox" id="enableEnv" style="margin-right:8px; width:auto;"> 附加环境变量 (ENV)
@@ -1653,30 +1641,23 @@ function getMainPage() {
         <div class="accordion-header" data-target="infoPanel"><span>📖 使用说明</span><span class="arrow">▼</span></div>
         <div id="infoPanel" class="accordion-content">
           <div class="info-section">
-            <h3>📋 三区配置、多 KV 绑定、CF域名开关与缺省前缀说明</h3>
-            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，支持多服务器组、多 KV 绑定与全局项目复用：</p>
-            <pre><code>1. 多 KV 绑定支持：
-   - 主页与项目设置区均支持绑定多个 KV（多个变量各自对应不同的 KV 仓库与保留/清空策略）。
-   - 主页的“附加 KV 绑定 (KV)”勾选后展开，点击“➕ 添加 KV”可添加多组；项目设置区的 KV 设置区同样支持动态添加多组 KV。
+            <h3>📋 项目分组、多 KV 绑定与三区配置说明</h3>
+            <p>点击底部 <strong>📋 常用部署</strong> -> <strong>⚙️ 账户设置</strong>，支持服务器组、Worker/Pages 项目、项目分组与多 KV 绑定：</p>
+            <pre><code>1. 项目分组设置区：
+   - 将经常一起部署的 Worker 与 Pages 项目归类为自定义分组，支持集中批量部署。
+   - 分组块头含选取框与分组名称，默认收起，点击展开/收起；勾选分组框全选组内项目，取消勾选全取消组内项目。
+   - 支持增删项目绑定（删绑定不删项目），同一项目可被多个分组绑定；项目设置弹窗中也可点击“绑定分组”挂靠到既有或新建分组。
 
-2. 第一区【服务器设置（账户组）】：
-   - 配置组标识、Account ID、API Token、默认组环境变量(ENV)以及【组项目域名】（例如：example.com）。
-   - 每个服务器组内均配有【CF域名】可选框：勾选后开启 CF 提供的 workers.dev 域名（Production 开启、Preview 关闭）；取消勾选则关闭 workers.dev 域名（Production 与 Preview 均关闭）。
+2. 服务器设置（附加分组/项目）：
+   - 支持展开分组按需勾选组内项目，也支持直接勾选分组块头一键附加/取消组内全部项目。
+   - 若某服务器组未完整选取某项目分组内的全部项目，常用部署的项目列表内对该分组不予显示。
 
-3. 第二区【Worker 项目区】与第三区【Pages 项目区】：
-   - 全局维护 Worker / Pages 项目模板，支持多组 KV 绑定、独立环境变量(ENV)及 Worker 自定义子域名。
-   - 设为隐藏的项目会归类收纳至“隐藏的项目”折叠标签中，点击可展开管理。
-
-4. 【缺省地址前缀】与【部署记录】：
-   - 每次部署均会自动保存至【部署记录】（/records），同时记录项目原有的 KV/ENV（蓝色字体）与本次新设置/替换的 KV/ENV（绿色字体），并支持导出为 XLSX 或 JSON 文件。</code></pre>
-          </div>
-          <div class="info-section">
-            <h3>🌐 单次页面部署</h3>
-            <p>填写 Account ID、API Token 和项目名称，如需绑定 KV 可勾选“附加 KV 绑定 (KV)”展开配置，展开对应部署面板后点击部署。</p>
+3. 常用部署三列布局：
+   - 最左列为【项目分组】，中间为【Workers】，右侧为【Pages】。</code></pre>
           </div>
           <div class="info-section">
             <h3>⚡ POST 部署</h3>
-            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或表单格式（可通过 <code>kvs: [{ binding, name, action }]</code> 传递多个 KV 绑定，或使用 <code>kvBinding</code>/<code>kv</code>/<code>kvAction</code> 传递单个 KV）。</p>
+            <p>向 <code>/api/deploy</code> 发送 POST 请求，支持 JSON 或表单格式。</p>
             <pre><code>fetch("https://your-worker.workers.dev/api/deploy", {
   method: "POST",
   headers: {
@@ -1687,10 +1668,7 @@ function getMainPage() {
     type: "worker",
     id: "YOUR_ACCOUNT_ID",
     token: "YOUR_API_TOKEN",
-    kvs: [
-      { binding: "KV_MAIN", name: "MY_KV_1", action: "keep" },
-      { binding: "KV_CACHE", name: "MY_KV_2", action: "clear" }
-    ],
+    kvs: [{ binding: "KV", name: "MY_KV", action: "keep" }],
     name: "my-worker-app",
     source: "default",
     cfDomain: true
@@ -1805,7 +1783,6 @@ function getMainPage() {
         output.scrollTop = output.scrollHeight;
       });
 
-      // KV 设置区（参考 ENV 设置区，勾选才展开）
       const kvContainer = document.getElementById('kvContainer');
       document.getElementById('enableKv').addEventListener('change', function () {
         kvContainer.style.display = this.checked ? 'block' : 'none';
@@ -1829,7 +1806,6 @@ function getMainPage() {
         document.getElementById('kvList').appendChild(div);
       }
 
-      // ENV 设置区
       const envContainer = document.getElementById('envContainer');
       document.getElementById('enableEnv').addEventListener('change', function () {
         envContainer.style.display = this.checked ? 'block' : 'none';
@@ -1950,7 +1926,7 @@ function getMainPage() {
 </body></html>`;
 }
 
-// ==================== 常用部署页面 ====================
+// ==================== 常用部署页面（三列：项目分组列在最左 + Workers + Pages） ====================
 function getDashboardPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>常用部署</title><style>${GLOBAL_STYLE}
     .account-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; background: #fff; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
@@ -1965,15 +1941,24 @@ function getDashboardPage() {
     .project-list { display: none; padding: 12px; border-top: 1px solid var(--border); }
     .project-list.active { display: block; }
 
-    .project-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    /* 三列布局：项目分组列在最左 */
+    .project-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
     .project-column { background: #fff; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; min-width: 0; }
-    .column-header { background: #f8fafc; padding: 10px 12px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; border-bottom: 1px solid var(--border); }
-    .column-content { padding: 4px 10px 10px 10px; }
+    .column-header { background: #f8fafc; padding: 10px 10px; font-size: 12.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; border-bottom: 1px solid var(--border); color: #1e293b; }
+    .column-content { padding: 6px 10px 10px 10px; }
 
-    .project-item { padding: 8px 0; border-bottom: 1px solid #f1f2f6; }
+    .dash-grp-block { border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; background: #fafbfc; overflow: hidden; }
+    .dash-grp-block:last-child { margin-bottom: 0; }
+    .dash-grp-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 8px; background: #f1f5f9; cursor: pointer; font-size: 12px; font-weight: 600; color: #334155; user-select: none; }
+    .dash-grp-header:hover { background: #e2e8f0; }
+    .dash-grp-body { display: none; padding: 6px 8px; background: #fff; border-top: 1px solid #e2e8f0; }
+    .dash-grp-body.active { display: block; }
+    .dash-grp-sublabel { font-size: 10px; color: #94a3b8; margin: 4px 0 2px; font-weight: 600; }
+
+    .project-item { padding: 6px 0; border-bottom: 1px solid #f1f2f6; }
     .project-item:last-child { border-bottom: none; }
-    .project-title { display: flex; align-items: center; cursor: pointer; font-size: 13px; color: #334155; }
-    .project-details { display: none; margin-top: 4px; padding-left: 24px; font-size: 11px; color: #94a3b8; line-height: 1.5; word-break: break-all; }
+    .project-title { display: flex; align-items: center; cursor: pointer; font-size: 12.5px; color: #334155; }
+    .project-details { display: none; margin-top: 4px; padding-left: 20px; font-size: 11px; color: #94a3b8; line-height: 1.5; word-break: break-all; }
     .project-details.active { display: block; }
 
     .temp-deploy-block { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; align-items: center; }
@@ -1983,10 +1968,8 @@ function getDashboardPage() {
     .cf-monitor-box.active { display: block; }
 
     .deploy-btn { width: 100%; padding: 12px; font-size: 15px; margin-top: 15px; }
-    @media (max-width: 600px) {
-      .project-columns { gap: 6px; }
-      .column-header { padding: 8px; font-size: 12px; }
-      .project-title { font-size: 12px; }
+    @media (max-width: 780px) {
+      .project-columns { grid-template-columns: 1fr; gap: 8px; }
       .temp-deploy-block { grid-template-columns: 1fr 1fr; }
     }
   </style></head><body>
@@ -2011,6 +1994,7 @@ function getDashboardPage() {
     let allAccounts = [];
     let allWorkerProjects = [];
     let allPageProjects = [];
+    let allProjectGroups = [];
 
     async function loadAccounts() {
       const res = await fetch('/api/accounts');
@@ -2019,6 +2003,7 @@ function getDashboardPage() {
         allAccounts = data.accounts || [];
         allWorkerProjects = data.workerProjects || [];
         allPageProjects = data.pageProjects || [];
+        allProjectGroups = Array.isArray(data.projectGroups) ? data.projectGroups : [];
         renderAccounts();
       }
     }
@@ -2052,6 +2037,32 @@ function getDashboardPage() {
       }
     }
 
+    // 规则：若某服务器组未完整选取某项目分组内的全部项目（即存在组内项目未附加到该服务器），常用部署中对该分组不予显示
+    function getEligibleGroupsForAccount(account) {
+      const attW = new Set(Array.isArray(account.attachedWorkers) ? account.attachedWorkers : []);
+      const attP = new Set(Array.isArray(account.attachedPages) ? account.attachedPages : []);
+
+      return (allProjectGroups || []).map(grp => {
+        const wIds = Array.isArray(grp.workerIds) ? grp.workerIds : [];
+        const pIds = Array.isArray(grp.pageIds) ? grp.pageIds : [];
+        const workers = wIds.map(id => allWorkerProjects.find(w => w.id === id)).filter(w => w && w.show !== false);
+        const pages = pIds.map(id => allPageProjects.find(p => p.id === id)).filter(p => p && p.show !== false);
+
+        if (workers.length === 0 && pages.length === 0) return null;
+
+        const allWorkersAttached = workers.every(w => attW.has(w.id));
+        const allPagesAttached = pages.every(p => attP.has(p.id));
+        if (!allWorkersAttached || !allPagesAttached) return null;
+
+        return {
+          id: grp.id,
+          name: grp.name || '未命名分组',
+          workers,
+          pages
+        };
+      }).filter(Boolean);
+    }
+
     function renderAccounts() {
       const container = document.getElementById('accountList');
       container.innerHTML = '';
@@ -2060,6 +2071,7 @@ function getDashboardPage() {
       allAccounts.forEach((account, accIndex) => {
         if (account.show === false) return;
         visibleCount++;
+        const eligibleGroups = getEligibleGroupsForAccount(account);
         const activeWorkers = getGroupAttachedProjects(account, 'worker');
         const activePages = getGroupAttachedProjects(account, 'page');
         const domainBadge = account.domain ? '<span class="account-domain-tag">' + escapeHtml(account.domain) + '</span>' : '';
@@ -2077,11 +2089,15 @@ function getDashboardPage() {
           '<div class="project-list">' +
             '<div class="project-columns">' +
               '<div class="project-column">' +
-                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="worker"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="worker"> 🚀 Workers</div>' +
+                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="pgroup"><input type="checkbox" class="group-col-checkbox" data-acc-index="' + accIndex + '" data-group="pgroup"> 📦 项目分组</div>' +
+                '<div class="column-content">' + renderDashboardProjectGroups(eligibleGroups, accIndex, account) + '</div>' +
+              '</div>' +
+              '<div class="project-column">' +
+                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="worker"><input type="checkbox" class="group-col-checkbox" data-acc-index="' + accIndex + '" data-group="worker"> 🚀 Workers</div>' +
                 '<div class="column-content">' + renderProjects(activeWorkers, 'worker', accIndex, account) + '</div>' +
               '</div>' +
               '<div class="project-column">' +
-                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="page"><input type="checkbox" class="group-checkbox" data-acc-index="' + accIndex + '" data-group="page"> 📄 Pages</div>' +
+                '<div class="column-header" data-acc-index="' + accIndex + '" data-group="page"><input type="checkbox" class="group-col-checkbox" data-acc-index="' + accIndex + '" data-group="page"> 📄 Pages</div>' +
                 '<div class="column-content">' + renderProjects(activePages, 'page', accIndex, account) + '</div>' +
               '</div>' +
             '</div>' +
@@ -2111,6 +2127,49 @@ function getDashboardPage() {
         list.classList.toggle('active');
         this.querySelector('.arrow').textContent = list.classList.contains('active') ? '▲' : '▼';
       }));
+
+      // 常用部署内分组块头：点击展开/收起，勾选全选/取消全选组内项目
+      document.querySelectorAll('.dash-grp-header').forEach(h => {
+        h.addEventListener('click', function (e) {
+          if (e.target.tagName === 'INPUT') return;
+          const body = this.nextElementSibling;
+          const next = !body.classList.contains('active');
+          body.classList.toggle('active', next);
+          const ar = this.querySelector('.dgrp-arrow');
+          if (ar) ar.textContent = next ? '▲' : '▼';
+        });
+      });
+
+      document.querySelectorAll('.dash-grp-cb').forEach(cb => {
+        cb.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const accIdx = this.dataset.accIndex;
+          const grpId = this.dataset.grpId;
+          const body = this.closest('.dash-grp-block').querySelector('.dash-grp-body');
+          if (this.checked && body) {
+            body.classList.add('active');
+            const ar = this.closest('.dash-grp-header').querySelector('.dgrp-arrow');
+            if (ar) ar.textContent = '▲';
+          }
+          document.querySelectorAll('.dash-grp-item-cb[data-acc-index="' + accIdx + '"][data-grp-id="' + grpId + '"]').forEach(itemCb => {
+            itemCb.checked = this.checked;
+          });
+          checkAccountSync(accIdx);
+        });
+      });
+
+      document.querySelectorAll('.dash-grp-item-cb').forEach(itemCb => {
+        itemCb.addEventListener('change', function () {
+          const accIdx = this.dataset.accIndex;
+          const grpId = this.dataset.grpId;
+          const allItems = document.querySelectorAll('.dash-grp-item-cb[data-acc-index="' + accIdx + '"][data-grp-id="' + grpId + '"]');
+          const checkedItems = document.querySelectorAll('.dash-grp-item-cb[data-acc-index="' + accIdx + '"][data-grp-id="' + grpId + '"]:checked');
+          const grpCb = document.querySelector('.dash-grp-cb[data-acc-index="' + accIdx + '"][data-grp-id="' + grpId + '"]');
+          if (grpCb) grpCb.checked = (allItems.length > 0 && allItems.length === checkedItems.length);
+          checkAccountSync(accIdx);
+        });
+      });
+
       document.querySelectorAll('.project-title').forEach(t => t.addEventListener('click', function (e) {
         if (e.target.tagName === 'INPUT') return;
         this.nextElementSibling.classList.toggle('active');
@@ -2157,33 +2216,82 @@ function getDashboardPage() {
         const sel = document.querySelector('.temp-kv-action[data-acc-index="' + this.dataset.accIndex + '"]');
         if (sel) sel.disabled = !this.value.trim();
       }));
+
       document.querySelectorAll('.account-checkbox').forEach(cb => cb.addEventListener('change', function () {
         const idx = this.dataset.accIndex;
-        document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"], .group-checkbox[data-acc-index="' + idx + '"]').forEach(c => c.checked = this.checked);
+        document.querySelectorAll(
+          '.normal-checkbox[data-acc-index="' + idx + '"], .group-col-checkbox[data-acc-index="' + idx + '"], .dash-grp-cb[data-acc-index="' + idx + '"], .dash-grp-item-cb[data-acc-index="' + idx + '"]'
+        ).forEach(c => c.checked = this.checked);
       }));
+
       document.querySelectorAll('.column-header').forEach(header => header.addEventListener('click', function (e) {
-        const cb = this.querySelector('.group-checkbox');
+        const cb = this.querySelector('.group-col-checkbox');
         if (e.target.tagName !== 'INPUT') cb.checked = !cb.checked;
-        document.querySelectorAll('.normal-checkbox[data-acc-index="' + this.dataset.accIndex + '"][data-type="' + this.dataset.group + '"]').forEach(c => c.checked = cb.checked);
-        checkAccountSync(this.dataset.accIndex);
+        const idx = this.dataset.accIndex;
+        const grp = this.dataset.group;
+        if (grp === 'pgroup') {
+          document.querySelectorAll('.dash-grp-cb[data-acc-index="' + idx + '"], .dash-grp-item-cb[data-acc-index="' + idx + '"]').forEach(c => c.checked = cb.checked);
+        } else {
+          document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + grp + '"]').forEach(c => c.checked = cb.checked);
+        }
+        checkAccountSync(idx);
       }));
+
       document.querySelectorAll('.normal-checkbox').forEach(cb => cb.addEventListener('change', function () {
-        checkGroupSync(this.dataset.accIndex, this.dataset.type);
+        checkColumnSync(this.dataset.accIndex, this.dataset.type);
         checkAccountSync(this.dataset.accIndex);
       }));
 
-      function checkGroupSync(idx, type) {
+      function checkColumnSync(idx, type) {
         const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]');
         const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"][data-type="' + type + '"]:checked');
-        const gcb = document.querySelector('.group-checkbox[data-acc-index="' + idx + '"][data-group="' + type + '"]');
+        const gcb = document.querySelector('.group-col-checkbox[data-acc-index="' + idx + '"][data-group="' + type + '"]');
         if (gcb) gcb.checked = (all.length > 0 && all.length === checked.length);
       }
+
       function checkAccountSync(idx) {
-        const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]');
-        const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]:checked');
+        const all = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"], .dash-grp-item-cb[data-acc-index="' + idx + '"]');
+        const checked = document.querySelectorAll('.normal-checkbox[data-acc-index="' + idx + '"]:checked, .dash-grp-item-cb[data-acc-index="' + idx + '"]:checked');
         const accCb = document.querySelector('.account-checkbox[data-acc-index="' + idx + '"]');
         if (accCb) accCb.checked = (all.length > 0 && all.length === checked.length);
       }
+    }
+
+    function renderDashboardProjectGroups(groups, accIndex, account) {
+      if (!groups || groups.length === 0) {
+        return '<div style="padding:10px 0; color:#cbd5e1; text-align:center; font-size:12px;">无可用完整分组</div>';
+      }
+      return groups.map(grp => {
+        let itemsHtml = '';
+        if (grp.workers.length > 0) {
+          itemsHtml += '<div class="dash-grp-sublabel">🚀 Workers</div>';
+          itemsHtml += grp.workers.map(w =>
+            '<label class="project-item" style="display:flex; align-items:center; cursor:pointer; font-size:12px; color:#334155;">' +
+              '<input type="checkbox" class="dash-grp-item-cb" data-acc-index="' + accIndex + '" data-grp-id="' + escapeHtml(grp.id) + '" data-type="worker" data-proj-id="' + escapeHtml(w.id) + '">' +
+              '<span>' + escapeHtml(w.name) + '</span>' +
+            '</label>'
+          ).join('');
+        }
+        if (grp.pages.length > 0) {
+          itemsHtml += '<div class="dash-grp-sublabel">📄 Pages</div>';
+          itemsHtml += grp.pages.map(p =>
+            '<label class="project-item" style="display:flex; align-items:center; cursor:pointer; font-size:12px; color:#334155;">' +
+              '<input type="checkbox" class="dash-grp-item-cb" data-acc-index="' + accIndex + '" data-grp-id="' + escapeHtml(grp.id) + '" data-type="page" data-proj-id="' + escapeHtml(p.id) + '">' +
+              '<span>' + escapeHtml(p.name) + '</span>' +
+            '</label>'
+          ).join('');
+        }
+        return '<div class="dash-grp-block">' +
+          '<div class="dash-grp-header">' +
+            '<span style="display:flex; align-items:center; gap:4px; min-width:0;">' +
+              '<input type="checkbox" class="dash-grp-cb" data-acc-index="' + accIndex + '" data-grp-id="' + escapeHtml(grp.id) + '">' +
+              '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(grp.name) + '</span>' +
+            '</span>' +
+            '<span class="dgrp-arrow" style="color:#94a3b8; font-size:10px; flex-shrink:0;">▼</span>' +
+          '</div>' +
+          '<div class="dash-grp-body">' + itemsHtml + '</div>' +
+        '</div>';
+      }).join('');
     }
 
     function renderProjects(projects, type, accIndex, account) {
@@ -2224,9 +2332,13 @@ function getDashboardPage() {
     }
 
     document.getElementById('btnDeploySelected').addEventListener('click', async function () {
-      const btn = this, output = document.getElementById('logOutput'), cfBox = document.getElementById('cfMonitorBox'), selected = [];
-      document.querySelectorAll('.normal-checkbox:checked, .temp-checkbox:checked').forEach(cb => {
+      const btn = this, output = document.getElementById('logOutput'), cfBox = document.getElementById('cfMonitorBox');
+      const selected = [];
+      const seenKeys = new Set();
+
+      document.querySelectorAll('.normal-checkbox:checked, .dash-grp-item-cb:checked, .temp-checkbox:checked').forEach(cb => {
         const accIndex = parseInt(cb.dataset.accIndex), account = allAccounts[accIndex];
+        if (!account) return;
         if (cb.classList.contains('temp-checkbox')) {
           const type = document.querySelector('.temp-type[data-acc-index="' + accIndex + '"]').value;
           const name = document.querySelector('.temp-name[data-acc-index="' + accIndex + '"]').value.trim();
@@ -2235,9 +2347,18 @@ function getDashboardPage() {
           const kvAction = document.querySelector('.temp-kv-action[data-acc-index="' + accIndex + '"]').value;
           const codeUrl = document.querySelector('.temp-source[data-acc-index="' + accIndex + '"]').value.trim();
           const kvs = (kvName || kvBinding) ? [{ binding: kvBinding, name: kvName, action: kvAction }] : [];
-          if (name) selected.push({ type, account, proj: { name, kvBinding, kvName, kvAction, kvs, codeUrl: codeUrl || 'default', envs: [] } });
+          if (name) {
+            const key = 'temp|' + accIndex + '|' + type + '|' + name;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              selected.push({ type, account, proj: { name, kvBinding, kvName, kvAction, kvs, codeUrl: codeUrl || 'default', envs: [] } });
+            }
+          }
         } else {
           const type = cb.dataset.type, projId = cb.dataset.projId;
+          const key = 'proj|' + accIndex + '|' + type + '|' + projId;
+          if (seenKeys.has(key)) return;
+          seenKeys.add(key);
           const proj = type === 'worker' ? allWorkerProjects.find(w => w.id === projId) : allPageProjects.find(p => p.id === projId);
           if (proj) selected.push({ type, account, proj });
         }
@@ -2320,7 +2441,7 @@ function getDashboardPage() {
 </body></html>`;
 }
 
-// ==================== 账户与三区项目配置管理页面 ====================
+// ==================== 账户与项目配置管理页面 ====================
 function getAccountsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>账户与项目设置</title><style>${GLOBAL_STYLE}
     .action-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
@@ -2360,14 +2481,37 @@ function getAccountsPage() {
     .project-detail-info b { color: #334155; font-size: 13px; }
     .project-detail-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: 10px; }
 
+    /* 项目分组设置块（块头选取框 + 分组名称，默认收起，点击展开/收起） */
+    .pgrp-card { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px; background: #fff; overflow: hidden; }
+    .pgrp-card:last-child { margin-bottom: 0; }
+    .pgrp-header { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; background: #fafbfc; cursor: pointer; user-select: none; transition: 0.2s; }
+    .pgrp-header:hover { background: #f1f2f6; }
+    .pgrp-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+    .pgrp-name-text { font-size: 14px; font-weight: 600; color: #1e293b; }
+    .pgrp-header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .pgrp-body { display: none; padding: 12px 14px; border-top: 1px solid #e2e8f0; background: #fff; }
+    .pgrp-body.active { display: block; }
+    .pgrp-bound-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .bound-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 8px; border-radius: 6px; background: #f8fafc; border: 1px solid #cbd5e1; color: #334155; }
+    .bound-chip .unbind-x { color: #ef4444; cursor: pointer; font-weight: 700; padding: 0 2px; }
+    .bound-chip .unbind-x:hover { color: #b91c1c; }
+
+    /* 服务器设置弹窗中的分组折叠项 */
+    .att-grp-block { border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; background: #fff; overflow: hidden; }
+    .att-grp-block:last-child { margin-bottom: 0; }
+    .att-grp-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; background: #f1f5f9; cursor: pointer; font-size: 12.5px; font-weight: 600; color: #334155; user-select: none; }
+    .att-grp-body { display: none; padding: 8px 10px; border-top: 1px solid #e2e8f0; background: #fafbfc; }
+    .att-grp-body.active { display: block; }
+
     .tag-pill { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #f1f5f9; color: #475569; margin-right: 4px; margin-top: 3px; }
     .tag-pill.worker { background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; }
     .tag-pill.page { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
+    .tag-pill.grp { background: #f3e8ff; color: #6d28d9; border: 1px solid #ddd6fe; }
     .tag-pill.domain { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
     .tag-pill.cf-on { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
     .tag-pill.cf-off { background: #f1f5f9; color: #64748b; }
 
-    .attach-box { background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; max-height: 210px; overflow-y: auto; }
+    .attach-box { background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; max-height: 220px; overflow-y: auto; }
     .attach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
     .attach-item { display: flex; align-items: center; font-size: 13px; color: #334155; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: #fff; border: 1px solid #eaedf1; }
     .attach-item:hover { border-color: var(--primary); }
@@ -2434,6 +2578,20 @@ function getAccountsPage() {
         </div>
       </div>
 
+      <!-- ==================== 项目分组设置区（Worker/Pages 设置区下） ==================== -->
+      <div class="zone-card">
+        <div class="zone-header" data-zone="zoneGroupBody">
+          <div class="zone-title">📦 项目分组设置 <span class="zone-badge" id="zoneGroupCount">0 组</span></div>
+          <div class="zone-header-right">
+            <button id="btnAddProjectGroup" class="btn-primary" style="padding: 6px 12px; font-size: 12px;">➕ 新建分组</button>
+            <span class="zone-arrow">▼</span>
+          </div>
+        </div>
+        <div id="zoneGroupBody" class="zone-body">
+          <div id="projectGroupList"></div>
+        </div>
+      </div>
+
       <!-- ==================== 缺省地址前缀模块 ==================== -->
       <div class="zone-card" style="margin-bottom: 0;">
         <div class="zone-header" data-zone="zonePrefixBody">
@@ -2480,7 +2638,7 @@ function getAccountsPage() {
     </div>
   </div>
 
-  <!-- 第一区：服务器组编辑弹窗 -->
+  <!-- 第一区：服务器组编辑弹窗（支持附加分组与附加项目） -->
   <div id="editModal" class="modal">
     <div class="modal-content">
       <h3 id="modalTitle" style="margin-bottom:15px; font-size:16px;">编辑服务器组</h3>
@@ -2508,12 +2666,17 @@ function getAccountsPage() {
       </div>
 
       <div class="form-group">
-        <label>🚀 附加 Worker 项目（勾选需要在此服务器组部署的项目）</label>
+        <label>📦 附加项目分组（勾选分组全选组内项目，也可展开分组只勾选部分项目）</label>
+        <div id="attachGroupBox" class="attach-box"></div>
+      </div>
+
+      <div class="form-group">
+        <label>🚀 附加 Worker 项目</label>
         <div id="attachWorkerBox" class="attach-box"></div>
       </div>
 
       <div class="form-group">
-        <label>📄 附加 Pages 项目（勾选需要在此服务器组部署的项目）</label>
+        <label>📄 附加 Pages 项目</label>
         <div id="attachPageBox" class="attach-box"></div>
       </div>
 
@@ -2526,7 +2689,7 @@ function getAccountsPage() {
     </div>
   </div>
 
-  <!-- 第二区 & 第三区：全局 Worker / Pages 项目配置弹窗（KV 设置区参考 ENV 设置区设计） -->
+  <!-- 第二区 & 第三区：全局 Worker / Pages 项目配置弹窗 -->
   <div id="projModal" class="modal">
     <div class="modal-content" style="max-width: 620px;">
       <h3 id="projModalTitle" style="margin-bottom:15px; font-size:16px;">配置项目</h3>
@@ -2551,11 +2714,54 @@ function getAccountsPage() {
         <button type="button" id="btnAddProjEnv" class="add-btn" style="width:auto; margin-top:8px;">➕ 添加项目变量</button>
       </div>
 
-      <div class="form-group"><label style="display:flex; align-items:center; cursor:pointer;"><input type="checkbox" id="pShow" checked> 在常用部署中启用显示</label></div>
+      <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; cursor:pointer; margin-bottom:0;"><input type="checkbox" id="pShow" checked> 在常用部署中启用显示</label>
+        <button type="button" id="btnBindProjectGroup" class="add-btn" style="background:#f3e8ff; color:#6d28d9; border:1px solid #ddd6fe; margin-top:0;">🔗 绑定分组</button>
+      </div>
 
       <div style="display:flex; gap:10px; margin-top:20px;">
         <button id="btnSaveProj" class="btn-primary" style="flex:1; padding:10px;">保存项目</button>
         <button id="btnCancelProj" class="btn-danger" style="flex:1; padding:10px; background:#f1f5f9; color:#475569;">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 项目弹窗内的“绑定分组”弹窗 -->
+  <div id="bindGroupModal" class="modal" style="z-index: 1020;">
+    <div class="modal-content" style="max-width: 480px;">
+      <h3 style="margin-bottom:12px; font-size:16px;">🔗 绑定到项目分组</h3>
+      <div style="font-size:12px; color:#64748b; margin-bottom:10px;">勾选既有分组进行绑定，也可输入新分组名称后点击“新建并勾选”。</div>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <input type="text" id="newBindGroupNameInput" placeholder="输入新分组自定义名称..." style="flex:1;">
+        <button type="button" id="btnCreateAndCheckGroup" class="btn-primary" style="padding:0 12px; font-size:12px; flex-shrink:0;">➕ 新建并勾选</button>
+      </div>
+      <div id="bindGroupChecklist" class="attach-box" style="max-height:220px;"></div>
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button type="button" id="btnConfirmBindGroup" class="btn-primary" style="flex:1; padding:10px;">确定</button>
+        <button type="button" id="btnCancelBindGroup" class="btn-danger" style="flex:1; padding:10px; background:#f1f5f9; color:#475569;">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建/编辑项目分组弹窗 -->
+  <div id="groupEditorModal" class="modal">
+    <div class="modal-content" style="max-width: 580px;">
+      <h3 id="groupEditorTitle" style="margin-bottom:14px; font-size:16px;">📦 新建项目分组</h3>
+      <div class="form-group">
+        <label>分组自定义名称</label>
+        <input type="text" id="grpNameInput" placeholder="例如：核心业务套件">
+      </div>
+      <div class="form-group">
+        <label>🚀 绑定 Worker 项目（可多选，同一项目可同时属于多个分组）</label>
+        <div id="grpWorkerSelectBox" class="attach-box"></div>
+      </div>
+      <div class="form-group">
+        <label>📄 绑定 Pages 项目（可多选，同一项目可同时属于多个分组）</label>
+        <div id="grpPageSelectBox" class="attach-box"></div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:18px;">
+        <button type="button" id="btnSaveGroupEditor" class="btn-primary" style="flex:1; padding:10px;">保存分组</button>
+        <button type="button" id="btnCancelGroupEditor" class="btn-danger" style="flex:1; padding:10px; background:#f1f5f9; color:#475569;">取消</button>
       </div>
     </div>
   </div>
@@ -2581,20 +2787,25 @@ function getAccountsPage() {
     let accounts = [];
     let workerProjects = [];
     let pageProjects = [];
+    let projectGroups = [];
     let sysDefaultPrefix = "";
     let prefixList = [];
     let draftPrefixes = [];
     let editingIdentifier = null;
     let editingProjType = 'worker';
     let editingProjId = null;
+    let editingGroupId = null;
+    let pendingGroupIdsForCurrentProj = null;
 
     const collapseState = {
       zone1Body: false,
       zone2Body: false,
       zone3Body: false,
+      zoneGroupBody: false,
       zonePrefixBody: false,
       hiddenWorker: false,
-      hiddenPage: false
+      hiddenPage: false,
+      pgrpExpanded: {}
     };
 
     function ensureTrailingSlash(val) {
@@ -2647,6 +2858,7 @@ function getAccountsPage() {
         accounts = data.accounts || [];
         workerProjects = data.workerProjects || [];
         pageProjects = data.pageProjects || [];
+        projectGroups = Array.isArray(data.projectGroups) ? data.projectGroups : [];
         prefixList = Array.isArray(data.prefixes) ? data.prefixes.map(ensureTrailingSlash).filter(Boolean) : [];
         sysDefaultPrefix = ensureTrailingSlash(data.defaultPrefix || "");
         if (sysDefaultPrefix && !prefixList.includes(sysDefaultPrefix)) {
@@ -2666,7 +2878,7 @@ function getAccountsPage() {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workerProjects, pageProjects })
+        body: JSON.stringify({ workerProjects, pageProjects, projectGroups })
       });
       return await res.json();
     }
@@ -2696,9 +2908,11 @@ function getAccountsPage() {
       document.getElementById('zone1Count').textContent = accounts.length + ' 组';
       document.getElementById('zone2Count').textContent = workerProjects.length + ' 项';
       document.getElementById('zone3Count').textContent = pageProjects.length + ' 项';
+      document.getElementById('zoneGroupCount').textContent = projectGroups.length + ' 组';
       renderAccounts();
       renderGlobalProjects('worker');
       renderGlobalProjects('page');
+      renderProjectGroups();
     }
 
     // ==================== 渲染第一区：服务器组 ====================
@@ -2764,13 +2978,17 @@ function getAccountsPage() {
       const subInfo = (type === 'worker' && p.subdomain) ? (' | 子域: <span style="color:#10b981;">' + escapeHtml(p.subdomain) + '</span>') : '';
       const envCount = (p.envs || []).filter(e => e.name).length;
       const envInfo = envCount > 0 ? (' | 独立ENV: ' + envCount + '项') : '';
+      const boundGroupNames = projectGroups
+        .filter(g => (type === 'worker' ? (g.workerIds || []).includes(p.id) : (g.pageIds || []).includes(p.id)))
+        .map(g => g.name);
+      const grpInfo = boundGroupNames.length > 0 ? (' | 分组: ' + boundGroupNames.join(', ')) : '';
       const uDis = originalIdx === 0 ? 'disabled' : '', dDis = originalIdx === totalLen - 1 ? 'disabled' : '';
 
       const div = document.createElement('div');
       div.className = 'project-detail';
       div.innerHTML =
         '<div class="project-detail-info">' + hTag + '<b>' + escapeHtml(p.name) + '</b><br>' +
-          '<span style="font-size:11px;">' + escapeHtml(kvInfo) + subInfo + envInfo + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span>' +
+          '<span style="font-size:11px;">' + escapeHtml(kvInfo) + subInfo + envInfo + escapeHtml(grpInfo) + ' | 源: ' + escapeHtml(p.codeUrl || '默认') + '</span>' +
         '</div>' +
         '<div class="project-detail-actions">' +
           '<button class="btn-icon p-up" ' + uDis + ' data-type="' + type + '" data-idx="' + originalIdx + '">' + ICONS.up + '</button>' +
@@ -2854,13 +3072,277 @@ function getAccountsPage() {
         const id = b.dataset.id;
         if (b.dataset.type === 'worker') {
           workerProjects = workerProjects.filter(w => w.id !== id);
+          projectGroups.forEach(g => { g.workerIds = (g.workerIds || []).filter(x => x !== id); });
         } else {
           pageProjects = pageProjects.filter(p => p.id !== id);
+          projectGroups.forEach(g => { g.pageIds = (g.pageIds || []).filter(x => x !== id); });
         }
         await saveGlobalProjectsToServer();
         renderAll();
       }));
     }
+
+    // ==================== 渲染项目分组设置区 ====================
+    function isGroupAllSelectedInEditor(grp) {
+      const wIds = grp.workerIds || [];
+      const pIds = grp.pageIds || [];
+      const total = wIds.length + pIds.length;
+      if (total === 0) return false;
+      const wChecked = wIds.every(id => {
+        const cb = document.querySelector('.pgrp-item-cb[data-grp-id="' + grp.id + '"][data-type="worker"][data-proj-id="' + id + '"]');
+        return cb && cb.checked;
+      });
+      const pChecked = pIds.every(id => {
+        const cb = document.querySelector('.pgrp-item-cb[data-grp-id="' + grp.id + '"][data-type="page"][data-proj-id="' + id + '"]');
+        return cb && cb.checked;
+      });
+      return wChecked && pChecked;
+    }
+
+    function renderProjectGroups() {
+      const container = document.getElementById('projectGroupList');
+      container.innerHTML = '';
+      if (!projectGroups || projectGroups.length === 0) {
+        container.innerHTML = '<p style="text-align:center; color:#94a3b8; font-size:13px; margin:10px 0;">暂无项目分组，点击右上角“新建分组”或前往项目设置中“绑定分组”。</p>';
+        return;
+      }
+
+      projectGroups.forEach((grp, gIdx) => {
+        const isExpanded = !!collapseState.pgrpExpanded[grp.id];
+        const wList = (grp.workerIds || []).map(id => workerProjects.find(w => w.id === id)).filter(Boolean);
+        const pList = (grp.pageIds || []).map(id => pageProjects.find(p => p.id === id)).filter(Boolean);
+        const disUp = gIdx === 0 ? 'disabled' : '';
+        const disDn = gIdx === projectGroups.length - 1 ? 'disabled' : '';
+
+        const card = document.createElement('div');
+        card.className = 'pgrp-card';
+
+        let chipsHtml = '';
+        if (wList.length === 0 && pList.length === 0) {
+          chipsHtml = '<div style="font-size:12px; color:#94a3b8;">当前分组暂未绑定项目</div>';
+        } else {
+          chipsHtml = '<div class="pgrp-bound-list">' +
+            wList.map(w =>
+              '<span class="bound-chip">' +
+                '<input type="checkbox" class="pgrp-item-cb" data-grp-id="' + escapeHtml(grp.id) + '" data-type="worker" data-proj-id="' + escapeHtml(w.id) + '">' +
+                '<span>🚀 ' + escapeHtml(w.name) + '</span>' +
+                '<span class="unbind-x" data-grp-id="' + escapeHtml(grp.id) + '" data-type="worker" data-proj-id="' + escapeHtml(w.id) + '" title="解除绑定（不删除项目）">×</span>' +
+              '</span>'
+            ).join('') +
+            pList.map(p =>
+              '<span class="bound-chip">' +
+                '<input type="checkbox" class="pgrp-item-cb" data-grp-id="' + escapeHtml(grp.id) + '" data-type="page" data-proj-id="' + escapeHtml(p.id) + '">' +
+                '<span>📄 ' + escapeHtml(p.name) + '</span>' +
+                '<span class="unbind-x" data-grp-id="' + escapeHtml(grp.id) + '" data-type="page" data-proj-id="' + escapeHtml(p.id) + '" title="解除绑定（不删除项目）">×</span>' +
+              '</span>'
+            ).join('') +
+          '</div>';
+        }
+
+        // 添加项目绑定下拉/勾选区
+        const availWorkers = workerProjects.filter(w => !(grp.workerIds || []).includes(w.id));
+        const availPages = pageProjects.filter(p => !(grp.pageIds || []).includes(p.id));
+        let addBindHtml = '';
+        if (availWorkers.length > 0 || availPages.length > 0) {
+          let opts = '<option value="">选择要绑定的既有项目...</option>';
+          availWorkers.forEach(w => { opts += '<option value="worker:' + escapeHtml(w.id) + '">[Worker] ' + escapeHtml(w.name) + '</option>'; });
+          availPages.forEach(p => { opts += '<option value="page:' + escapeHtml(p.id) + '">[Pages] ' + escapeHtml(p.name) + '</option>'; });
+          addBindHtml =
+            '<div style="display:flex; gap:8px; margin-top:10px; align-items:center;">' +
+              '<select class="pgrp-add-select" data-grp-id="' + escapeHtml(grp.id) + '" style="flex:1; padding:7px 10px; font-size:12px;">' + opts + '</select>' +
+              '<button type="button" class="btn-primary pgrp-add-bind-btn" data-grp-id="' + escapeHtml(grp.id) + '" style="padding:7px 12px; font-size:12px; flex-shrink:0;">➕ 添加绑定</button>' +
+            '</div>';
+        }
+
+        card.innerHTML =
+          '<div class="pgrp-header" data-grp-id="' + escapeHtml(grp.id) + '">' +
+            '<div class="pgrp-header-left">' +
+              '<input type="checkbox" class="pgrp-select-all-cb" data-grp-id="' + escapeHtml(grp.id) + '" title="全选/取消全选组内项目">' +
+              '<span class="pgrp-name-text">' + escapeHtml(grp.name) + '</span>' +
+              '<span class="tag-pill grp">' + (wList.length + pList.length) + ' 项</span>' +
+            '</div>' +
+            '<div class="pgrp-header-right">' +
+              '<button type="button" class="btn-icon pgrp-up" ' + disUp + ' data-idx="' + gIdx + '">' + ICONS.up + '</button>' +
+              '<button type="button" class="btn-icon pgrp-dn" ' + disDn + ' data-idx="' + gIdx + '">' + ICONS.down + '</button>' +
+              '<button type="button" class="btn-icon pgrp-edit" data-id="' + escapeHtml(grp.id) + '" style="color:var(--primary)">' + ICONS.edit + '</button>' +
+              '<button type="button" class="btn-icon pgrp-del" data-id="' + escapeHtml(grp.id) + '" style="color:#ef4444">' + ICONS.del + '</button>' +
+              '<span class="pgrp-arrow" style="color:#94a3b8; font-size:12px; margin-left:6px;">' + (isExpanded ? '▲' : '▼') + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="pgrp-body' + (isExpanded ? ' active' : '') + '">' +
+            chipsHtml +
+            addBindHtml +
+          '</div>';
+
+        container.appendChild(card);
+      });
+
+      // 点击块头展开/收起
+      container.querySelectorAll('.pgrp-header').forEach(h => {
+        h.addEventListener('click', function (e) {
+          if (e.target.closest('button') || e.target.tagName === 'INPUT') return;
+          const grpId = this.dataset.grpId;
+          const next = !collapseState.pgrpExpanded[grpId];
+          collapseState.pgrpExpanded[grpId] = next;
+          this.nextElementSibling.classList.toggle('active', next);
+          const ar = this.querySelector('.pgrp-arrow');
+          if (ar) ar.textContent = next ? '▲' : '▼';
+        });
+      });
+
+      // 勾选块头选取框：全选或全取消组内项目
+      container.querySelectorAll('.pgrp-select-all-cb').forEach(cb => {
+        cb.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const grpId = this.dataset.grpId;
+          const card = this.closest('.pgrp-card');
+          const body = card.querySelector('.pgrp-body');
+          if (this.checked && body) {
+            collapseState.pgrpExpanded[grpId] = true;
+            body.classList.add('active');
+            const ar = card.querySelector('.pgrp-arrow');
+            if (ar) ar.textContent = '▲';
+          }
+          card.querySelectorAll('.pgrp-item-cb').forEach(icb => { icb.checked = this.checked; });
+        });
+      });
+
+      container.querySelectorAll('.pgrp-item-cb').forEach(icb => {
+        icb.addEventListener('change', function () {
+          const grpId = this.dataset.grpId;
+          const grp = projectGroups.find(g => g.id === grpId);
+          const selAll = this.closest('.pgrp-card').querySelector('.pgrp-select-all-cb');
+          if (grp && selAll) {
+            selAll.checked = isGroupAllSelectedInEditor(grp);
+          }
+        });
+      });
+
+      // 解除项目绑定（只删绑定关系，不删项目本身）
+      container.querySelectorAll('.unbind-x').forEach(x => {
+        x.addEventListener('click', async function (e) {
+          e.stopPropagation();
+          const grpId = this.dataset.grpId;
+          const type = this.dataset.type;
+          const projId = this.dataset.projId;
+          const grp = projectGroups.find(g => g.id === grpId);
+          if (!grp) return;
+          if (type === 'worker') grp.workerIds = (grp.workerIds || []).filter(id => id !== projId);
+          else grp.pageIds = (grp.pageIds || []).filter(id => id !== projId);
+          await saveGlobalProjectsToServer();
+          renderAll();
+        });
+      });
+
+      // 添加项目绑定
+      container.querySelectorAll('.pgrp-add-bind-btn').forEach(btn => {
+        btn.addEventListener('click', async function () {
+          const grpId = this.dataset.grpId;
+          const sel = this.previousElementSibling;
+          const val = sel ? sel.value : '';
+          if (!val) return alert('请先选择要绑定的项目');
+          const [type, projId] = val.split(':');
+          const grp = projectGroups.find(g => g.id === grpId);
+          if (!grp) return;
+          if (type === 'worker') {
+            if (!Array.isArray(grp.workerIds)) grp.workerIds = [];
+            if (!grp.workerIds.includes(projId)) grp.workerIds.push(projId);
+          } else {
+            if (!Array.isArray(grp.pageIds)) grp.pageIds = [];
+            if (!grp.pageIds.includes(projId)) grp.pageIds.push(projId);
+          }
+          collapseState.pgrpExpanded[grpId] = true;
+          await saveGlobalProjectsToServer();
+          renderAll();
+        });
+      });
+
+      container.querySelectorAll('.pgrp-up').forEach(b => b.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (moveArrItem(projectGroups, parseInt(b.dataset.idx), -1)) { await saveGlobalProjectsToServer(); renderAll(); }
+      }));
+      container.querySelectorAll('.pgrp-dn').forEach(b => b.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (moveArrItem(projectGroups, parseInt(b.dataset.idx), 1)) { await saveGlobalProjectsToServer(); renderAll(); }
+      }));
+      container.querySelectorAll('.pgrp-edit').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        openGroupEditorModal(b.dataset.id);
+      }));
+      container.querySelectorAll('.pgrp-del').forEach(b => b.addEventListener('click', async e => {
+        e.stopPropagation();
+        const grp = projectGroups.find(g => g.id === b.dataset.id);
+        if (!grp) return;
+        if (!confirm('确认删除分组“' + grp.name + '”？（仅删除分组绑定，不会删除组内项目）')) return;
+        projectGroups = projectGroups.filter(g => g.id !== b.dataset.id);
+        await saveGlobalProjectsToServer();
+        renderAll();
+      }));
+    }
+
+    // ==================== 新建/编辑项目分组弹窗 ====================
+    function openGroupEditorModal(groupId = null) {
+      editingGroupId = groupId;
+      const grp = groupId ? projectGroups.find(g => g.id === groupId) : null;
+      document.getElementById('groupEditorTitle').textContent = grp ? ('编辑项目分组: ' + grp.name) : '📦 新建项目分组';
+      document.getElementById('grpNameInput').value = grp ? (grp.name || '') : '';
+
+      const selW = grp ? (grp.workerIds || []) : [];
+      const selP = grp ? (grp.pageIds || []) : [];
+
+      const wBox = document.getElementById('grpWorkerSelectBox');
+      if (!workerProjects.length) {
+        wBox.innerHTML = '<div style="color:#94a3b8; font-size:12px;">暂无 Worker 项目</div>';
+      } else {
+        wBox.innerHTML = '<div class="attach-grid">' + workerProjects.map(w =>
+          '<label class="attach-item"><input type="checkbox" class="grp-ed-w-cb" value="' + escapeHtml(w.id) + '" ' + (selW.includes(w.id) ? 'checked' : '') + '> ' + escapeHtml(w.name) + '</label>'
+        ).join('') + '</div>';
+      }
+
+      const pBox = document.getElementById('grpPageSelectBox');
+      if (!pageProjects.length) {
+        pBox.innerHTML = '<div style="color:#94a3b8; font-size:12px;">暂无 Pages 项目</div>';
+      } else {
+        pBox.innerHTML = '<div class="attach-grid">' + pageProjects.map(p =>
+          '<label class="attach-item"><input type="checkbox" class="grp-ed-p-cb" value="' + escapeHtml(p.id) + '" ' + (selP.includes(p.id) ? 'checked' : '') + '> ' + escapeHtml(p.name) + '</label>'
+        ).join('') + '</div>';
+      }
+
+      document.getElementById('groupEditorModal').classList.add('active');
+    }
+
+    document.getElementById('btnAddProjectGroup').addEventListener('click', e => {
+      e.stopPropagation();
+      openGroupEditorModal(null);
+    });
+    document.getElementById('btnCancelGroupEditor').addEventListener('click', () => {
+      document.getElementById('groupEditorModal').classList.remove('active');
+    });
+
+    document.getElementById('btnSaveGroupEditor').addEventListener('click', async () => {
+      const name = document.getElementById('grpNameInput').value.trim();
+      if (!name) return alert('请填写分组名称');
+      const workerIds = Array.from(document.querySelectorAll('.grp-ed-w-cb:checked')).map(cb => cb.value);
+      const pageIds = Array.from(document.querySelectorAll('.grp-ed-p-cb:checked')).map(cb => cb.value);
+
+      if (editingGroupId) {
+        const idx = projectGroups.findIndex(g => g.id === editingGroupId);
+        if (idx >= 0) projectGroups[idx] = { ...projectGroups[idx], name, workerIds, pageIds };
+      } else {
+        const newId = 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        projectGroups.push({ id: newId, name, workerIds, pageIds });
+        collapseState.pgrpExpanded[newId] = true;
+      }
+
+      const res = await saveGlobalProjectsToServer();
+      if (res.success) {
+        document.getElementById('groupEditorModal').classList.remove('active');
+        setZoneExpanded('zoneGroupBody', true);
+        renderAll();
+      } else {
+        alert('保存分组失败');
+      }
+    });
 
     /* 缺省前缀下拉切换与设置弹窗逻辑 */
     document.getElementById('sysDefaultPrefixSelect').addEventListener('change', async function () {
@@ -3017,7 +3499,6 @@ function getAccountsPage() {
       }; reader.readAsText(file);
     });
 
-    /* 项目 KV 行构建函数（参考 ENV 行设计） */
     function buildProjKvRow(binding = '', name = '', action = 'keep') {
       const div = document.createElement('div');
       div.className = 'kv-row-item';
@@ -3039,7 +3520,6 @@ function getAccountsPage() {
       buildProjKvRow();
     });
 
-    /* 通用 ENV 行构建函数 */
     function buildEnvRow(containerId, name = '', value = '', action = 'keep') {
       const div = document.createElement('div');
       div.className = 'env-row-item';
@@ -3058,6 +3538,96 @@ function getAccountsPage() {
     }
     document.getElementById('btnAddAccEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('accEnvList'); });
     document.getElementById('btnAddProjEnv').addEventListener('click', (e) => { e.preventDefault(); buildEnvRow('projEnvList'); });
+
+    /* 服务器设置弹窗：渲染附加分组（支持直接勾选分组全选，或展开分组只选部分项目） */
+    function syncAttachGroupCheckboxes() {
+      document.querySelectorAll('#attachGroupBox .att-grp-block').forEach(block => {
+        const grpCb = block.querySelector('.att-grp-cb');
+        const itemCbs = Array.from(block.querySelectorAll('.att-grp-item-cb'));
+        if (grpCb && itemCbs.length > 0) {
+          grpCb.checked = itemCbs.every(c => c.checked);
+        }
+      });
+    }
+
+    function renderAttachGroupBox(selectedWorkers = [], selectedPages = []) {
+      const box = document.getElementById('attachGroupBox');
+      box.innerHTML = '';
+      const validGroups = (projectGroups || []).filter(g => {
+        const w = (g.workerIds || []).map(id => workerProjects.find(x => x.id === id)).filter(Boolean);
+        const p = (g.pageIds || []).map(id => pageProjects.find(x => x.id === id)).filter(Boolean);
+        return w.length > 0 || p.length > 0;
+      });
+      if (validGroups.length === 0) {
+        box.innerHTML = '<div style="color:#94a3b8; font-size:12px;">暂无已绑定项目的分组</div>';
+        return;
+      }
+
+      validGroups.forEach(g => {
+        const wList = (g.workerIds || []).map(id => workerProjects.find(x => x.id === id)).filter(Boolean);
+        const pList = (g.pageIds || []).map(id => pageProjects.find(x => x.id === id)).filter(Boolean);
+
+        const block = document.createElement('div');
+        block.className = 'att-grp-block';
+
+        let itemsHtml = '<div class="attach-grid">';
+        wList.forEach(w => {
+          const chk = selectedWorkers.includes(w.id) ? 'checked' : '';
+          itemsHtml += '<label class="attach-item"><input type="checkbox" class="att-grp-item-cb" data-type="worker" value="' + escapeHtml(w.id) + '" ' + chk + '> 🚀 ' + escapeHtml(w.name) + '</label>';
+        });
+        pList.forEach(p => {
+          const chk = selectedPages.includes(p.id) ? 'checked' : '';
+          itemsHtml += '<label class="attach-item"><input type="checkbox" class="att-grp-item-cb" data-type="page" value="' + escapeHtml(p.id) + '" ' + chk + '> 📄 ' + escapeHtml(p.name) + '</label>';
+        });
+        itemsHtml += '</div>';
+
+        block.innerHTML =
+          '<div class="att-grp-header">' +
+            '<span style="display:flex; align-items:center; gap:4px;"><input type="checkbox" class="att-grp-cb" data-grp-id="' + escapeHtml(g.id) + '"> 📦 ' + escapeHtml(g.name) + ' (' + (wList.length + pList.length) + ')</span>' +
+            '<span class="att-grp-arrow" style="color:#94a3b8; font-size:11px;">▼</span>' +
+          '</div>' +
+          '<div class="att-grp-body">' + itemsHtml + '</div>';
+
+        box.appendChild(block);
+      });
+
+      box.querySelectorAll('.att-grp-header').forEach(h => {
+        h.addEventListener('click', function (e) {
+          if (e.target.tagName === 'INPUT') return;
+          const body = this.nextElementSibling;
+          const next = !body.classList.contains('active');
+          body.classList.toggle('active', next);
+          this.querySelector('.att-grp-arrow').textContent = next ? '▲' : '▼';
+        });
+      });
+
+      box.querySelectorAll('.att-grp-cb').forEach(cb => {
+        cb.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const block = this.closest('.att-grp-block');
+          const body = block.querySelector('.att-grp-body');
+          if (this.checked && body) {
+            body.classList.add('active');
+            block.querySelector('.att-grp-arrow').textContent = '▲';
+          }
+          block.querySelectorAll('.att-grp-item-cb').forEach(icb => {
+            icb.checked = this.checked;
+            const targetBox = icb.dataset.type === 'worker' ? document.getElementById('attachWorkerBox') : document.getElementById('attachPageBox');
+            const mirror = targetBox.querySelector('input[type="checkbox"][value="' + icb.value + '"]');
+            if (mirror) mirror.checked = this.checked;
+          });
+        });
+      });
+
+      box.querySelectorAll('.att-grp-item-cb').forEach(icb => {
+        icb.addEventListener('change', function () {
+          const targetBox = this.dataset.type === 'worker' ? document.getElementById('attachWorkerBox') : document.getElementById('attachPageBox');
+          const mirror = targetBox.querySelector('input[type="checkbox"][value="' + this.value + '"]');
+          if (mirror) mirror.checked = this.checked;
+          syncAttachGroupCheckboxes();
+        });
+      });
+    }
 
     function renderSingleAttachBox(boxId, list, selectedIds, cbClass, emptyText) {
       const box = document.getElementById(boxId);
@@ -3114,11 +3684,22 @@ function getAccountsPage() {
         wrap.appendChild(body);
         box.appendChild(wrap);
       }
+
+      box.querySelectorAll('.' + cbClass).forEach(cb => {
+        cb.addEventListener('change', function () {
+          const grpType = cbClass === 'att-w-cb' ? 'worker' : 'page';
+          const mirror = document.querySelector('#attachGroupBox .att-grp-item-cb[data-type="' + grpType + '"][value="' + this.value + '"]');
+          if (mirror) mirror.checked = this.checked;
+          syncAttachGroupCheckboxes();
+        });
+      });
     }
 
     function renderAttachGrids(selectedWorkers = [], selectedPages = []) {
-      renderSingleAttachBox('attachWorkerBox', workerProjects, selectedWorkers, 'att-w-cb', '请先在第二区添加 Worker 项目');
-      renderSingleAttachBox('attachPageBox', pageProjects, selectedPages, 'att-p-cb', '请先在第三区添加 Pages 项目');
+      renderSingleAttachBox('attachWorkerBox', workerProjects, selectedWorkers, 'att-w-cb', '请先在 Worker 项目区添加项目');
+      renderSingleAttachBox('attachPageBox', pageProjects, selectedPages, 'att-p-cb', '请先在 Pages 项目区添加项目');
+      renderAttachGroupBox(selectedWorkers, selectedPages);
+      syncAttachGroupCheckboxes();
     }
 
     /* 第一区：服务器组新增/编辑弹窗 */
@@ -3174,15 +3755,19 @@ function getAccountsPage() {
         action: el.querySelector('.e-act').value
       })).filter(i => i.name);
 
-      const attachedWorkers = Array.from(document.querySelectorAll('.att-w-cb:checked')).map(cb => cb.value);
-      const attachedPages = Array.from(document.querySelectorAll('.att-p-cb:checked')).map(cb => cb.value);
+      const wSet = new Set(Array.from(document.querySelectorAll('.att-w-cb:checked')).map(cb => cb.value));
+      const pSet = new Set(Array.from(document.querySelectorAll('.att-p-cb:checked')).map(cb => cb.value));
+      document.querySelectorAll('#attachGroupBox .att-grp-item-cb:checked').forEach(cb => {
+        if (cb.dataset.type === 'worker') wSet.add(cb.value);
+        else pSet.add(cb.value);
+      });
 
       const payload = {
         identifier, accountId, token, domain, cfDomain,
         show: document.getElementById('editAccountShow').checked,
         envs: getEnvs('accEnvList'),
-        attachedWorkers,
-        attachedPages
+        attachedWorkers: Array.from(wSet),
+        attachedPages: Array.from(pSet)
       };
 
       const data = await (await fetch('/api/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).json();
@@ -3194,9 +3779,18 @@ function getAccountsPage() {
     });
 
     /* 第二区 & 第三区：全局项目新增/编辑弹窗 */
+    function getCurrentBoundGroupIdsForModal() {
+      if (Array.isArray(pendingGroupIdsForCurrentProj)) return [...pendingGroupIdsForCurrentProj];
+      if (!editingProjId) return [];
+      return projectGroups
+        .filter(g => (editingProjType === 'worker' ? (g.workerIds || []).includes(editingProjId) : (g.pageIds || []).includes(editingProjId)))
+        .map(g => g.id);
+    }
+
     function openProjModal(type, projId = null) {
       editingProjType = type;
       editingProjId = projId;
+      pendingGroupIdsForCurrentProj = null;
       const isWorker = type === 'worker';
       document.getElementById('projModalTitle').textContent = (projId ? '编辑 ' : '新增 ') + (isWorker ? 'Worker 项目' : 'Pages 项目');
       document.getElementById('pUrlLabel').textContent = isWorker ? '代码源地址 (JS URL 或相对路径)' : 'ZIP 文件地址 (ZIP URL 或相对路径)';
@@ -3238,7 +3832,53 @@ function getAccountsPage() {
       e.stopPropagation();
       openProjModal('page', null);
     });
-    document.getElementById('btnCancelProj').addEventListener('click', () => document.getElementById('projModal').classList.remove('active'));
+    document.getElementById('btnCancelProj').addEventListener('click', () => {
+      pendingGroupIdsForCurrentProj = null;
+      document.getElementById('projModal').classList.remove('active');
+    });
+
+    // 项目设置弹窗内的“绑定分组”按钮
+    function renderBindGroupChecklist(selectedGroupIds) {
+      const box = document.getElementById('bindGroupChecklist');
+      if (!projectGroups.length) {
+        box.innerHTML = '<div style="color:#94a3b8; font-size:12px;">暂无分组，请在上方输入名称并点击“新建并勾选”。</div>';
+        return;
+      }
+      box.innerHTML = '<div class="attach-grid">' + projectGroups.map(g => {
+        const chk = selectedGroupIds.includes(g.id) ? 'checked' : '';
+        return '<label class="attach-item"><input type="checkbox" class="bind-grp-cb" value="' + escapeHtml(g.id) + '" ' + chk + '> 📦 ' + escapeHtml(g.name) + '</label>';
+      }).join('') + '</div>';
+    }
+
+    document.getElementById('btnBindProjectGroup').addEventListener('click', () => {
+      const currentSelected = getCurrentBoundGroupIdsForModal();
+      document.getElementById('newBindGroupNameInput').value = '';
+      renderBindGroupChecklist(currentSelected);
+      document.getElementById('bindGroupModal').classList.add('active');
+    });
+
+    document.getElementById('btnCreateAndCheckGroup').addEventListener('click', () => {
+      const gName = document.getElementById('newBindGroupNameInput').value.trim();
+      if (!gName) return alert('请输入新分组名称');
+      let existing = projectGroups.find(g => g.name === gName);
+      if (!existing) {
+        existing = { id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5), name: gName, workerIds: [], pageIds: [] };
+        projectGroups.push(existing);
+      }
+      const checkedIds = Array.from(document.querySelectorAll('.bind-grp-cb:checked')).map(cb => cb.value);
+      if (!checkedIds.includes(existing.id)) checkedIds.push(existing.id);
+      document.getElementById('newBindGroupNameInput').value = '';
+      renderBindGroupChecklist(checkedIds);
+    });
+
+    document.getElementById('btnCancelBindGroup').addEventListener('click', () => {
+      document.getElementById('bindGroupModal').classList.remove('active');
+    });
+
+    document.getElementById('btnConfirmBindGroup').addEventListener('click', () => {
+      pendingGroupIdsForCurrentProj = Array.from(document.querySelectorAll('.bind-grp-cb:checked')).map(cb => cb.value);
+      document.getElementById('bindGroupModal').classList.remove('active');
+    });
 
     document.getElementById('btnSaveProj').addEventListener('click', async () => {
       const name = document.getElementById('pName').value.trim();
@@ -3259,8 +3899,9 @@ function getAccountsPage() {
       })).filter(i => i.name);
 
       const isWorker = editingProjType === 'worker';
+      const finalId = editingProjId || ((isWorker ? 'w_' : 'p_') + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
       const itemObj = {
-        id: editingProjId || ((isWorker ? 'w_' : 'p_') + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+        id: finalId,
         name,
         kvs,
         kvBinding: firstKv.binding,
@@ -3282,8 +3923,21 @@ function getAccountsPage() {
         targetList.push(itemObj);
       }
 
+      if (Array.isArray(pendingGroupIdsForCurrentProj)) {
+        const targetSet = new Set(pendingGroupIdsForCurrentProj);
+        projectGroups.forEach(g => {
+          const arrKey = isWorker ? 'workerIds' : 'pageIds';
+          if (!Array.isArray(g[arrKey])) g[arrKey] = [];
+          g[arrKey] = g[arrKey].filter(id => id !== finalId);
+          if (targetSet.has(g.id)) {
+            g[arrKey].push(finalId);
+          }
+        });
+      }
+
       const res = await saveGlobalProjectsToServer();
       if (res.success) {
+        pendingGroupIdsForCurrentProj = null;
         document.getElementById('projModal').classList.remove('active');
         setZoneExpanded(isWorker ? 'zone2Body' : 'zone3Body', true);
         renderAll();
@@ -3433,6 +4087,21 @@ function getRecordsPage() {
     }
 
     function renderColoredKvCells(r) {
+      const items = normalizeKvItems(r);
+      if (!items.length) return { varHtml: '-', repoHtml: '-' };
+      const varHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        return '<div class="item-line ' + cls + '">' + escapeHtml(item.name || '-') + '</div>';
+      }).join('');
+      const repoHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        const suffix = item.action ? ' (' + item.action + ')' : '';
+        return '<div class="item-line ' + cls + '">' + escapeHtml((item.repo || '-') + suffix) + '</div>';
+      }).join('');
+      return { varHtml, repoHtml };
+    }
+
+        function renderColoredKvCells(r) {
       const items = normalizeKvItems(r);
       if (!items.length) return { varHtml: '-', repoHtml: '-' };
       const varHtml = items.map(item => {
