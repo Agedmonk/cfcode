@@ -1,4 +1,4 @@
-const CURRENT_VERSION = "1.3.202611281550"; // 当前版本号，置于顶部方便随时修改
+const CURRENT_VERSION = "1.3.202611281553"; // 当前版本号，置于顶部方便随时修改
 
 export default {
   async fetch(request, env, ctx) {
@@ -156,6 +156,9 @@ async function getDeployRecords(env) {
 async function appendDeployRecord(env, record) {
   try {
     const records = await getDeployRecords(env);
+    const kvItems = Array.isArray(record.kvItems) ? record.kvItems : [];
+    const envItems = Array.isArray(record.envItems) ? record.envItems : [];
+
     const entry = {
       id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       time: record.time || formatBeijingTime(),
@@ -163,10 +166,12 @@ async function appendDeployRecord(env, record) {
       server: record.server || "",
       method: record.method || "Worker",
       projectName: record.projectName || "",
-      kvVar: record.kvVar || "",
-      kvRepo: record.kvRepo || "",
-      envVars: record.envVars || "",
-      envValues: record.envValues || "",
+      kvItems,
+      envItems,
+      kvVar: record.kvVar || kvItems.map(k => k.name).join(", "),
+      kvRepo: record.kvRepo || kvItems.map(k => `${k.repo}${k.action ? ` (${k.action})` : ''}`).join(", "),
+      envVars: record.envVars || envItems.map(e => e.name).join(", "),
+      envValues: record.envValues || envItems.map(e => e.value ?? "").join(", "),
       subdomain: record.subdomain || "",
       customDomains: record.customDomains || "",
       cfDomain: record.cfDomain || "",
@@ -197,6 +202,34 @@ async function handleClearRecords(env) {
   } catch (e) {
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
   }
+}
+
+// 获取账户所有 KV 命名空间映射表（id -> title）
+async function fetchAllKvNamespacesMap(accountId, headers) {
+  const map = new Map();
+  let page = 1;
+  while (page <= 10) {
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100&page=${page}`,
+        { headers },
+        12000
+      );
+      if (!res.ok) break;
+      const kvList = await res.json();
+      if (!kvList.success) break;
+      const list = kvList.result || [];
+      list.forEach(item => {
+        if (item && item.id) map.set(item.id, item.title || item.id);
+      });
+      const totalPages = kvList.result_info?.total_pages || 1;
+      if (page >= totalPages || list.length < 100) break;
+      page++;
+    } catch {
+      break;
+    }
+  }
+  return map;
 }
 
 // 支持分页遍历（per_page=100）与忽略大小写的 KV 命名空间查找函数
@@ -505,10 +538,13 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
   const log = (msg) => logs.push(msg);
   let resolvedCfDomain = "";
   let newlyBoundCustomDomain = "";
+  const kvItemsMap = new Map();
+  const envItemsMap = new Map();
+
   try {
     if (!codeUrl || codeUrl.trim() === "" || codeUrl.trim() === "default") codeUrl = DEFAULT_WORKER_CODE_URL;
     if (!accountId || !apiToken || !workerName) {
-      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400, resolvedSourceUrl: codeUrl, cfDomain: "", customDomains: [] };
+      return { success: false, error: "缺少必填参数", logs: ["ERR: 缺少必填参数"], status: 400, resolvedSourceUrl: codeUrl, cfDomain: "", customDomains: [], kvItems: [], envItems: [] };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -520,6 +556,7 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
 
     const isESM = workerCode.includes("export default");
     let bindings = [];
+    let kvIdToTitleMap = new Map();
 
     log(`[2/4] 检查并处理原有配置(KV/ENV)...`);
     try {
@@ -540,6 +577,35 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
           if (envCount > 0) details.push(`ENV ${envCount} 个`);
           if (otherCount > 0) details.push(`其他 ${otherCount} 个`);
           log(`[成功] 获取到原有配置: 共 ${bindings.length} 项 ${details.length > 0 ? '(' + details.join(', ') + ')' : ''}`);
+
+          if (kvCount > 0) {
+            kvIdToTitleMap = await fetchAllKvNamespacesMap(accountId, headers);
+          }
+
+          // 记录项目原有 KV 绑定（标记为旧配置 isNew: false）
+          bindings.forEach(b => {
+            if (b.type === 'kv_namespace') {
+              const title = kvIdToTitleMap.get(b.namespace_id) || b.namespace_id || "";
+              kvItemsMap.set(b.name, {
+                name: b.name,
+                repo: title,
+                action: '原有',
+                isNew: false
+              });
+            } else if (b.type === 'plain_text') {
+              envItemsMap.set(b.name, {
+                name: b.name,
+                value: b.text ?? "",
+                isNew: false
+              });
+            } else if (b.type === 'secret_text') {
+              envItemsMap.set(b.name, {
+                name: b.name,
+                value: "(Secret 加密值)",
+                isNew: false
+              });
+            }
+          });
         } else {
           log(`[提示] 原项目没有绑定配置`);
         }
@@ -570,6 +636,14 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       } else {
         bindings.push(newKvBindingObj);
       }
+
+      // 标记此 KV 为本次新设置 (isNew: true)
+      kvItemsMap.set(bindName, {
+        name: bindName,
+        repo: targetKvName,
+        action: kvAction === 'clear' ? '清空' : '保留',
+        isNew: true
+      });
       log(`[成功] KV 绑定配置完成 (KV变量: ${bindName}, ID: ${kvId})`);
     } else {
       log(`[提示] 未指定新 KV仓库，保留原有 KV 绑定关系`);
@@ -583,12 +657,23 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
         if (existingIdx >= 0) {
           if (env.action === 'replace') {
             bindings[existingIdx] = { type: "plain_text", name: env.name, text: env.value };
+            envItemsMap.set(env.name, { name: env.name, value: env.value ?? "", isNew: true });
             log(`  - [更新] 替换已有变量: ${env.name}`);
           } else {
+            // 保留原有变量值，保持 isNew: false
+            if (!envItemsMap.has(env.name)) {
+              const oldB = bindings[existingIdx];
+              envItemsMap.set(env.name, {
+                name: env.name,
+                value: oldB.type === 'secret_text' ? "(Secret 加密值)" : (oldB.text ?? ""),
+                isNew: false
+              });
+            }
             log(`  - [跳过] 保留已有变量: ${env.name}`);
           }
         } else {
           bindings.push({ type: "plain_text", name: env.name, text: env.value });
+          envItemsMap.set(env.name, { name: env.name, value: env.value ?? "", isNew: true });
           log(`  - [新增] 添加新变量: ${env.name}`);
         }
       });
@@ -633,11 +718,23 @@ async function deployWorkerCore(accountId, apiToken, kvName, workerName, codeUrl
       status: 200,
       resolvedSourceUrl: codeUrl,
       cfDomain: resolvedCfDomain,
-      customDomains: boundCustomDomains
+      customDomains: boundCustomDomains,
+      kvItems: Array.from(kvItemsMap.values()),
+      envItems: Array.from(envItemsMap.values())
     };
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: codeUrl, cfDomain: "", customDomains: [] };
+    return {
+      success: false,
+      error: err.message,
+      logs,
+      status: 500,
+      resolvedSourceUrl: codeUrl,
+      cfDomain: "",
+      customDomains: [],
+      kvItems: Array.from(kvItemsMap.values()),
+      envItems: Array.from(envItemsMap.values())
+    };
   }
 }
 
@@ -725,25 +822,59 @@ async function sha256Hex(uint8array) {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-// ==================== Pages 配置更新函数 ====================
-async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = [], kvBinding = '') {
+// ==================== Pages 配置读取与更新函数 ====================
+async function syncAndApplyPagesConfig(accountId, apiToken, projectName, kvName, logs, log, kvAction = 'keep', envs = [], kvBinding = '', existingProjData = null) {
   const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
+  const kvItemsMap = new Map();
+  const envItemsMap = new Map();
+
   try {
-    log(`  - 拉取当前 Pages 项目配置...`);
-    const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
-    if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
-    const projData = await projRes.json();
+    let projData = existingProjData;
+    if (!projData) {
+      log(`  - 拉取当前 Pages 项目配置...`);
+      const projRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 15000);
+      if (!projRes.ok) throw new Error(`获取 Pages 项目信息失败`);
+      projData = await projRes.json();
+    }
 
     let productionConfig = projData.result?.deployment_configs?.production || {};
     let previewConfig = projData.result?.deployment_configs?.preview || {};
 
-    let kvNamespacesProd = productionConfig.kv_namespaces || {};
-    let kvNamespacesPrev = previewConfig.kv_namespaces || {};
+    let kvNamespacesProd = { ...(productionConfig.kv_namespaces || {}) };
+    let kvNamespacesPrev = { ...(previewConfig.kv_namespaces || {}) };
 
-    let envVarsProd = productionConfig.env_vars || {};
-    let envVarsPrev = previewConfig.env_vars || {};
+    let envVarsProd = { ...(productionConfig.env_vars || {}) };
+    let envVarsPrev = { ...(previewConfig.env_vars || {}) };
 
-    if (kvName) {
+    // 先收集项目原本已有的 KV 与 ENV（标记为旧配置 isNew: false）
+    const existingKvEntries = Object.entries(kvNamespacesProd);
+    if (existingKvEntries.length > 0) {
+      const kvIdMap = await fetchAllKvNamespacesMap(accountId, headers);
+      existingKvEntries.forEach(([kVar, kObj]) => {
+        const nsId = kObj?.namespace_id || "";
+        const title = kvIdMap.get(nsId) || nsId;
+        kvItemsMap.set(kVar, {
+          name: kVar,
+          repo: title,
+          action: '原有',
+          isNew: false
+        });
+      });
+    }
+
+    Object.entries(envVarsProd).forEach(([eKey, eObj]) => {
+      const isSecret = eObj?.type === 'secret_text';
+      envItemsMap.set(eKey, {
+        name: eKey,
+        value: isSecret ? "(Secret 加密值)" : (eObj?.value ?? ""),
+        isNew: false
+      });
+    });
+
+    const hasNewKv = !!(kvName && kvName.trim());
+    const hasNewEnv = Array.isArray(envs) && envs.some(e => e && e.name);
+
+    if (hasNewKv) {
       let bindName = (kvBinding && kvBinding.trim()) ? kvBinding.trim() : "";
       if (!bindName) {
         const existingKeys = Object.keys(kvNamespacesProd);
@@ -754,10 +885,16 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
 
       kvNamespacesProd[bindName] = { namespace_id: kvId };
       kvNamespacesPrev[bindName] = { namespace_id: kvId };
+      kvItemsMap.set(bindName, {
+        name: bindName,
+        repo: kvName.trim(),
+        action: kvAction === 'clear' ? '清空' : '保留',
+        isNew: true
+      });
       log(`  - KV 绑定就绪 (KV变量: ${bindName}, ID: ${kvId})`);
     }
 
-    if (envs && envs.length > 0) {
+    if (hasNewEnv) {
       envs.forEach(env => {
         if (!env.name) return;
         if (envVarsProd[env.name] && env.action === 'keep') {
@@ -765,39 +902,51 @@ async function updatePagesConfig(accountId, apiToken, projectName, kvName, logs,
         } else {
           envVarsProd[env.name] = { type: "plain_text", value: env.value };
           envVarsPrev[env.name] = { type: "plain_text", value: env.value };
+          envItemsMap.set(env.name, {
+            name: env.name,
+            value: env.value ?? "",
+            isNew: true
+          });
           log(`  - [更新/新增] 环境变量: ${env.name}`);
         }
       });
     }
 
-    const updatePayload = {
-      deployment_configs: {
-        production: {},
-        preview: {}
+    if (hasNewKv || hasNewEnv) {
+      const updatePayload = {
+        deployment_configs: {
+          production: {},
+          preview: {}
+        }
+      };
+
+      if (hasNewKv) {
+        updatePayload.deployment_configs.production.kv_namespaces = kvNamespacesProd;
+        updatePayload.deployment_configs.preview.kv_namespaces = kvNamespacesPrev;
       }
+
+      if (hasNewEnv) {
+        updatePayload.deployment_configs.production.env_vars = envVarsProd;
+        updatePayload.deployment_configs.preview.env_vars = envVarsPrev;
+      }
+
+      const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, {
+        method: "PATCH", headers, body: JSON.stringify(updatePayload)
+      }, 15000);
+
+      if (!updateRes.ok) {
+        const err = await updateRes.json();
+        throw new Error(`更新项目配置失败: ${JSON.stringify(err.errors)}`);
+      }
+      log(`  - 配置更新成功！`);
+    }
+
+    return {
+      kvItems: Array.from(kvItemsMap.values()),
+      envItems: Array.from(envItemsMap.values())
     };
-
-    if (kvName) {
-      updatePayload.deployment_configs.production.kv_namespaces = kvNamespacesProd;
-      updatePayload.deployment_configs.preview.kv_namespaces = kvNamespacesPrev;
-    }
-
-    if (envs && envs.length > 0) {
-      updatePayload.deployment_configs.production.env_vars = envVarsProd;
-      updatePayload.deployment_configs.preview.env_vars = envVarsPrev;
-    }
-
-    const updateRes = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, {
-      method: "PATCH", headers, body: JSON.stringify(updatePayload)
-    }, 15000);
-
-    if (!updateRes.ok) {
-      const err = await updateRes.json();
-      throw new Error(`更新项目配置失败: ${JSON.stringify(err.errors)}`);
-    }
-    log(`  - 配置更新成功！`);
   } catch (err) {
-    log(`  - [错误] 更新配置失败: ${err.message}`);
+    log(`  - [错误] 处理配置失败: ${err.message}`);
     throw err;
   }
 }
@@ -808,10 +957,13 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
   const log = (msg) => logs.push(msg);
   let actualDomain = `${projectName}.pages.dev`;
   let projectDomainsList = [];
+  let trackedKvItems = [];
+  let trackedEnvItems = [];
+
   try {
     if (!zipUrl || zipUrl.trim() === "" || zipUrl.trim() === "default") zipUrl = DEFAULT_PAGES_ZIP_URL;
     if (!accountId || !apiToken || !projectName) {
-      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400, resolvedSourceUrl: zipUrl, cfDomain: "", customDomains: [] };
+      return { success: false, error: "缺少参数", logs: ["ERR: 缺少参数"], status: 400, resolvedSourceUrl: zipUrl, cfDomain: "", customDomains: [], kvItems: [], envItems: [] };
     }
 
     const headers = { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" };
@@ -825,14 +977,17 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
 
     log(`[3/6] 检查项目...`);
     let targetBranch = "main";
+    let existingProjData = null;
     const check = await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`, { headers }, 30000);
 
     if (check.status === 404) {
       const create = await (await fetchWithTimeout(`https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`, { method: "POST", headers, body: JSON.stringify({ name: projectName, production_branch: "main" }) }, 30000)).json();
       if (!create.success) throw new Error(`创建失败: ${JSON.stringify(create.errors)}`);
       if (create.result && create.result.subdomain) actualDomain = create.result.subdomain;
+      existingProjData = create;
     } else if (check.ok) {
       const projInfo = await check.json();
+      existingProjData = projInfo;
       if (projInfo.result) {
         if (projInfo.result.subdomain) actualDomain = projInfo.result.subdomain;
         if (projInfo.result.production_branch) targetBranch = projInfo.result.production_branch;
@@ -846,11 +1001,17 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
     const formattedDomain = actualDomain.includes(".pages.dev") ? actualDomain : `${actualDomain}.pages.dev`;
 
     if ((kvName && kvName.trim()) || (envs && envs.length > 0)) {
-      log(`[4/6] 更新项目配置(KV/ENV)...`);
-      await updatePagesConfig(accountId, apiToken, projectName, kvName ? kvName.trim() : "", logs, log, kvAction, envs, kvBinding);
+      log(`[4/6] 读取并更新项目配置(KV/ENV)...`);
     } else {
-      log(`[4/6] 无新KV及ENV配置，保留原有绑定设置...`);
+      log(`[4/6] 读取现有项目配置(KV/ENV)...`);
     }
+    const configResult = await syncAndApplyPagesConfig(
+      accountId, apiToken, projectName,
+      kvName ? kvName.trim() : "",
+      logs, log, kvAction, envs, kvBinding, existingProjData
+    );
+    trackedKvItems = configResult.kvItems;
+    trackedEnvItems = configResult.envItems;
 
     log(`[5/6] 构建 manifest...`);
     const manifest = {};
@@ -897,12 +1058,24 @@ async function deployPagesCore(accountId, apiToken, kvName, projectName, zipUrl,
       status: 200,
       resolvedSourceUrl: zipUrl,
       cfDomain: `https://${formattedDomain}`,
-      customDomains: boundCustomDomains
+      customDomains: boundCustomDomains,
+      kvItems: trackedKvItems,
+      envItems: trackedEnvItems
     };
 
   } catch (err) {
     log(`[错误] ${err.message}`);
-    return { success: false, error: err.message, logs, status: 500, resolvedSourceUrl: zipUrl, cfDomain: "", customDomains: [] };
+    return {
+      success: false,
+      error: err.message,
+      logs,
+      status: 500,
+      resolvedSourceUrl: zipUrl,
+      cfDomain: "",
+      customDomains: [],
+      kvItems: trackedKvItems,
+      envItems: trackedEnvItems
+    };
   }
 }
 
@@ -925,23 +1098,14 @@ async function findAccountByIdOrIdentifier(env, accountId) {
   return data.accounts.find(a => a.accountId === accountId || a.identifier === accountId) || null;
 }
 
-function summarizeEnvs(envs) {
-  if (!Array.isArray(envs) || envs.length === 0) return { names: "", values: "" };
-  const valid = envs.filter(e => e && e.name);
-  return {
-    names: valid.map(e => e.name).join(", "),
-    values: valid.map(e => e.value ?? "").join(", ")
-  };
-}
-
 // ==================== 统一部署分发 ====================
 async function deployByType(type, id, token, kv, name, source, kvAction = 'keep', envs = [], kvBinding = '', customDomain = '', cfDomain = false) {
   const t = String(type || "").toLowerCase();
   const src = source || "default";
-  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [] };
+  if (!t || !id || !token || !name) return { success: false, error: "参数缺失", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [], kvItems: [], envItems: [] };
   if (t === "worker") return deployWorkerCore(id, token, kv || "", name, src, kvAction, envs, kvBinding, customDomain, !!cfDomain);
   if (t === "page" || t === "pages") return deployPagesCore(id, token, kv || "", name, src, kvAction, envs, kvBinding);
-  return { success: false, error: "type 无效", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [] };
+  return { success: false, error: "type 无效", logs: ["ERR"], status: 400, resolvedSourceUrl: src, cfDomain: "", customDomains: [], kvItems: [], envItems: [] };
 }
 
 async function handleUnifiedDeploy(request, env) {
@@ -993,7 +1157,6 @@ async function handleUnifiedDeploy(request, env) {
   p.source = processSourceUrl(p.source, prefix);
   const result = await deployByType(p.type, p.id, p.token, p.kv, p.name, p.source, p.kvAction, p.envs, p.kvBinding, p.customDomain, enableCf);
 
-  const envSummary = summarizeEnvs(p.envs);
   const isWorker = String(p.type || "").toLowerCase() === "worker";
   const boundDomainsStr = Array.isArray(result.customDomains) ? result.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
@@ -1002,10 +1165,8 @@ async function handleUnifiedDeploy(request, env) {
     server: serverDisplay,
     method: isWorker ? "Worker" : "Pages",
     projectName: p.name || "",
-    kvVar: p.kvBinding || "",
-    kvRepo: p.kv ? `${p.kv} (${p.kvAction === 'clear' ? '清空' : '保留'})` : "",
-    envVars: envSummary.names,
-    envValues: envSummary.values,
+    kvItems: result.kvItems || [],
+    envItems: result.envItems || [],
     subdomain: p.subdomain || (p.customDomain ? p.customDomain.split(".")[0] : ""),
     customDomains: boundDomainsStr,
     cfDomain: result.cfDomain || "",
@@ -1045,10 +1206,8 @@ async function handleGetDeploy(url, env) {
     server: serverDisplay,
     method: String(type || "").toLowerCase() === "worker" ? "Worker" : "Pages",
     projectName: projName,
-    kvVar: kvBinding,
-    kvRepo: kvName ? `${kvName} (${kvAction === 'clear' ? '清空' : '保留'})` : "",
-    envVars: "",
-    envValues: "",
+    kvItems: result.kvItems || [],
+    envItems: result.envItems || [],
     subdomain: customDomain ? customDomain.split(".")[0] : "",
     customDomains: boundDomainsStr,
     cfDomain: result.cfDomain || "",
@@ -1072,7 +1231,6 @@ async function handleDeployWorker(request, env) {
   const codeUrl = processSourceUrl(b.codeUrl, prefix);
   const r = await deployWorkerCore(b.accountId, b.apiToken, b.kvName, b.workerName, codeUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '', b.customDomain || '', enableCf);
 
-  const envSummary = summarizeEnvs(b.envs || []);
   const boundDomainsStr = Array.isArray(r.customDomains) ? r.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
@@ -1080,10 +1238,8 @@ async function handleDeployWorker(request, env) {
     server: serverDisplay,
     method: "Worker",
     projectName: b.workerName || "",
-    kvVar: b.kvBinding || "",
-    kvRepo: b.kvName ? `${b.kvName} (${(b.kvAction || 'keep') === 'clear' ? '清空' : '保留'})` : "",
-    envVars: envSummary.names,
-    envValues: envSummary.values,
+    kvItems: r.kvItems || [],
+    envItems: r.envItems || [],
     subdomain: b.customDomain ? b.customDomain.split(".")[0] : "",
     customDomains: boundDomainsStr,
     cfDomain: r.cfDomain || "",
@@ -1106,7 +1262,6 @@ async function handleDeployPages(request, env) {
   const zipUrl = processSourceUrl(b.zipUrl, prefix);
   const r = await deployPagesCore(b.accountId, b.apiToken, b.kvName, b.projectName, zipUrl, b.kvAction || 'keep', b.envs || [], b.kvBinding || '');
 
-  const envSummary = summarizeEnvs(b.envs || []);
   const boundDomainsStr = Array.isArray(r.customDomains) ? r.customDomains.join(", ") : "";
   await appendDeployRecord(env, {
     time: formatBeijingTime(),
@@ -1114,10 +1269,8 @@ async function handleDeployPages(request, env) {
     server: serverDisplay,
     method: "Pages",
     projectName: b.projectName || "",
-    kvVar: b.kvBinding || "",
-    kvRepo: b.kvName ? `${b.kvName} (${(b.kvAction || 'keep') === 'clear' ? '清空' : '保留'})` : "",
-    envVars: envSummary.names,
-    envValues: envSummary.values,
+    kvItems: r.kvItems || [],
+    envItems: r.envItems || [],
     subdomain: "",
     customDomains: boundDomainsStr,
     cfDomain: r.cfDomain || (b.projectName ? `https://${b.projectName}.pages.dev` : ""),
@@ -1464,7 +1617,7 @@ function getMainPage() {
 
 4. 【缺省地址前缀】与【部署记录】：
    - 缺省地址前缀采用下拉列表展示，右侧设有“设置”按钮，可进行新增、编辑、删除与排序；默认处于收缩状态，点击展开，再点收回。新增或保存前缀时，若末尾不是 "/" 会自动补充。
-   - 每次部署均会自动保存至【部署记录】（/records），记录部署时间、部署状态、服务器、部署方式（Worker/Pages）、项目名称、KV变量、KV仓库、ENV变量、ENV值、子域名（如有）、自定义域名（如有）、CF域名、项目来源、耗时与日志。</code></pre>
+   - 每次部署均会自动保存至【部署记录】（/records），同时记录项目原有的 KV/ENV（蓝色字体）与本次新设置/替换的 KV/ENV（绿色字体），并支持导出为 XLSX 或 JSON 文件。</code></pre>
           </div>
           <div class="info-section">
             <h3>🌐 单次页面部署</h3>
@@ -3012,11 +3165,13 @@ function getAccountsPage() {
 // ==================== 部署记录页面 ====================
 function getRecordsPage() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>部署记录</title><style>${GLOBAL_STYLE}
-    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .filter-group { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
     .filter-group input, .filter-group select { width: auto; min-width: 130px; padding: 8px 12px; }
+    .legend-bar { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #64748b; margin-bottom: 12px; flex-wrap: wrap; }
+    .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
     .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1220px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 1240px; }
     th, td { padding: 10px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: top; word-break: break-all; }
     th { background: #f8fafc; color: #334155; font-weight: 600; white-space: nowrap; }
     tr:hover td { background: #fafbfc; }
@@ -3025,16 +3180,20 @@ function getRecordsPage() {
     .badge-err { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
     .badge-w { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
     .badge-p { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
+    .item-line { line-height: 1.55; margin-bottom: 2px; }
+    .item-line:last-child { margin-bottom: 0; }
+    .cfg-new { color: #047857; font-weight: 600; }
+    .cfg-old { color: #1d4ed8; font-weight: 500; }
     .log-btn { padding: 4px 8px; font-size: 11px; background: #f1f5f9; color: #334155; border-radius: 5px; white-space: nowrap; }
     .log-btn:hover { background: #e2e8f0; }
   </style></head><body>
-  <div class="container" style="max-width: 1280px;">
+  <div class="container" style="max-width: 1320px;">
     <div class="card">
       <h2>📜 部署记录</h2>
 
       <div class="toolbar">
         <div class="filter-group">
-          <input type="text" id="filterKeyword" placeholder="搜索项目名/服务器/域名/来源...">
+          <input type="text" id="filterKeyword" placeholder="搜索项目名/服务器/KV/ENV/域名...">
           <select id="filterStatus">
             <option value="">全部状态</option>
             <option value="成功">成功</option>
@@ -3046,10 +3205,18 @@ function getRecordsPage() {
             <option value="Pages">Pages</option>
           </select>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="btnExportXlsx" class="btn-primary" style="padding:8px 14px; font-size:12px; background:#10b981;">📊 导出 XLSX</button>
+          <button id="btnExportJson" class="btn-primary" style="padding:8px 14px; font-size:12px; background:#8b5cf6;">📥 导出 JSON</button>
           <button id="btnRefreshRecords" class="btn-primary" style="padding:8px 14px; font-size:12px;">🔄 刷新</button>
           <button id="btnClearRecords" class="btn-danger" style="padding:8px 14px; font-size:12px;">🗑️ 清空记录</button>
         </div>
+      </div>
+
+      <div class="legend-bar">
+        <span>KV / ENV 颜色说明：</span>
+        <span><i class="legend-dot" style="background:#047857;"></i><span class="cfg-new">绿色字体：本次新设置 / 替换</span></span>
+        <span><i class="legend-dot" style="background:#1d4ed8;"></i><span class="cfg-old">蓝色字体：项目原有绑定 / 保留</span></span>
       </div>
 
       <div class="table-wrap">
@@ -3100,11 +3267,64 @@ function getRecordsPage() {
 
   <script>
     let allRecords = [];
+    let currentFilteredRecords = [];
 
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text == null ? '' : String(text);
       return div.innerHTML;
+    }
+
+    function normalizeKvItems(r) {
+      if (Array.isArray(r.kvItems) && r.kvItems.length > 0) return r.kvItems;
+      if (r.kvVar || r.kvRepo) {
+        return [{ name: r.kvVar || '-', repo: r.kvRepo || '-', action: '', isNew: true }];
+      }
+      return [];
+    }
+
+    function normalizeEnvItems(r) {
+      if (Array.isArray(r.envItems) && r.envItems.length > 0) return r.envItems;
+      if (r.envVars || r.envValues) {
+        const names = String(r.envVars || '').split(', ');
+        const vals = String(r.envValues || '').split(', ');
+        return names.filter(Boolean).map((n, idx) => ({
+          name: n,
+          value: vals[idx] !== undefined ? vals[idx] : '',
+          isNew: true
+        }));
+      }
+      return [];
+    }
+
+    function renderColoredKvCells(r) {
+      const items = normalizeKvItems(r);
+      if (!items.length) return { varHtml: '-', repoHtml: '-' };
+      const varHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        return '<div class="item-line ' + cls + '">' + escapeHtml(item.name || '-') + '</div>';
+      }).join('');
+      const repoHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        const suffix = item.action ? ' (' + item.action + ')' : '';
+        return '<div class="item-line ' + cls + '">' + escapeHtml((item.repo || '-') + suffix) + '</div>';
+      }).join('');
+      return { varHtml, repoHtml };
+    }
+
+    function renderColoredEnvCells(r) {
+      const items = normalizeEnvItems(r);
+      if (!items.length) return { nameHtml: '-', valHtml: '-' };
+      const nameHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        return '<div class="item-line ' + cls + '">' + escapeHtml(item.name || '-') + '</div>';
+      }).join('');
+      const valHtml = items.map(item => {
+        const cls = item.isNew ? 'cfg-new' : 'cfg-old';
+        const valText = item.value === '' ? '(空)' : String(item.value ?? '');
+        return '<div class="item-line ' + cls + '">' + escapeHtml(valText) + '</div>';
+      }).join('');
+      return { nameHtml, valHtml };
     }
 
     async function loadRecords() {
@@ -3123,13 +3343,15 @@ function getRecordsPage() {
       const st = document.getElementById('filterStatus').value;
       const md = document.getElementById('filterMethod').value;
 
-      const filtered = allRecords.filter(r => {
+      currentFilteredRecords = allRecords.filter(r => {
         if (st && r.status !== st) return false;
         if (md && r.method !== md) return false;
         if (kw) {
+          const kvText = normalizeKvItems(r).map(k => k.name + ' ' + k.repo).join(' ');
+          const envText = normalizeEnvItems(r).map(e => e.name + ' ' + e.value).join(' ');
           const hay = [
             r.time, r.status, r.server, r.method, r.projectName,
-            r.kvVar, r.kvRepo, r.envVars, r.envValues, r.subdomain,
+            kvText, envText, r.subdomain,
             r.customDomains, r.cfDomain, r.sourceUrl, r.triggerSource
           ].join(' ').toLowerCase();
           if (!hay.includes(kw)) return false;
@@ -3138,12 +3360,12 @@ function getRecordsPage() {
       });
 
       const tbody = document.getElementById('recordsTbody');
-      if (!filtered.length) {
+      if (!currentFilteredRecords.length) {
         tbody.innerHTML = '<tr><td colspan="15" style="text-align:center; color:#94a3b8; padding:24px;">暂无部署记录</td></tr>';
         return;
       }
 
-      tbody.innerHTML = filtered.map((r, idx) => {
+      tbody.innerHTML = currentFilteredRecords.map((r, idx) => {
         const statusBadge = r.status === '成功'
           ? '<span class="badge badge-ok">成功</span>'
           : '<span class="badge badge-err">' + escapeHtml(r.status || '失败') + '</span>';
@@ -3151,6 +3373,8 @@ function getRecordsPage() {
           ? '<span class="badge badge-w">Worker</span>'
           : '<span class="badge badge-p">Pages</span>';
         const metaExtra = [r.duration, r.triggerSource].filter(Boolean).join(' · ');
+        const kvCells = renderColoredKvCells(r);
+        const envCells = renderColoredEnvCells(r);
 
         return '<tr>' +
           '<td style="white-space:nowrap;">' + escapeHtml(r.time) + '</td>' +
@@ -3158,10 +3382,10 @@ function getRecordsPage() {
           '<td>' + escapeHtml(r.server || '-') + '</td>' +
           '<td>' + methodBadge + '</td>' +
           '<td><b>' + escapeHtml(r.projectName || '-') + '</b></td>' +
-          '<td>' + escapeHtml(r.kvVar || '-') + '</td>' +
-          '<td>' + escapeHtml(r.kvRepo || '-') + '</td>' +
-          '<td>' + escapeHtml(r.envVars || '-') + '</td>' +
-          '<td>' + escapeHtml(r.envValues || '-') + '</td>' +
+          '<td>' + kvCells.varHtml + '</td>' +
+          '<td>' + kvCells.repoHtml + '</td>' +
+          '<td>' + envCells.nameHtml + '</td>' +
+          '<td>' + envCells.valHtml + '</td>' +
           '<td>' + escapeHtml(r.subdomain || '-') + '</td>' +
           '<td>' + escapeHtml(r.customDomains || '-') + '</td>' +
           '<td>' + escapeHtml(r.cfDomain || '-') + '</td>' +
@@ -3173,13 +3397,257 @@ function getRecordsPage() {
 
       tbody.querySelectorAll('.view-log-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          const item = filtered[parseInt(btn.dataset.idx)];
+          const item = currentFilteredRecords[parseInt(btn.dataset.idx)];
           document.getElementById('recordLogTitle').textContent = '部署日志：' + (item.projectName || '') + ' (' + (item.time || '') + ')';
           document.getElementById('recordLogText').value = (item.logs && item.logs.length) ? item.logs.join('\\n') : '无日志详情';
           document.getElementById('recordLogModal').classList.add('active');
         });
       });
     }
+
+    // ==================== 纯前端构建标准 XLSX 文件并导出 ====================
+    function xmlEscape(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')
+        .replace(/[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]/g, '');
+    }
+
+    function colIndexToLetters(idx) {
+      let n = idx + 1;
+      let s = '';
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        s = String.fromCharCode(65 + rem) + s;
+        n = Math.floor((n - 1) / 26);
+      }
+      return s;
+    }
+
+    function createZipStore(files) {
+      const enc = new TextEncoder();
+      const crcTable = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        crcTable[i] = c;
+      }
+      function crc32(buf) {
+        let c = 0xFFFFFFFF;
+        for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+      }
+
+      const localParts = [];
+      const centralParts = [];
+      let offset = 0;
+
+      for (const f of files) {
+        const nameBytes = enc.encode(f.name);
+        const dataBytes = enc.encode(f.content);
+        const crc = crc32(dataBytes);
+
+        const localHeader = new Uint8Array(30 + nameBytes.length);
+        const lv = new DataView(localHeader.buffer);
+        lv.setUint32(0, 0x04034b50, true);
+        lv.setUint16(4, 20, true);
+        lv.setUint16(6, 0x0800, true);
+        lv.setUint16(8, 0, true);
+        lv.setUint16(10, 0, true);
+        lv.setUint16(12, 0, true);
+        lv.setUint32(14, crc, true);
+        lv.setUint32(18, dataBytes.length, true);
+        lv.setUint32(22, dataBytes.length, true);
+        lv.setUint16(26, nameBytes.length, true);
+        lv.setUint16(28, 0, true);
+        localHeader.set(nameBytes, 30);
+
+        localParts.push(localHeader, dataBytes);
+
+        const centralHeader = new Uint8Array(46 + nameBytes.length);
+        const cv = new DataView(centralHeader.buffer);
+        cv.setUint32(0, 0x02014b50, true);
+        cv.setUint16(4, 20, true);
+        cv.setUint16(6, 20, true);
+        cv.setUint16(8, 0x0800, true);
+        cv.setUint16(10, 0, true);
+        cv.setUint16(12, 0, true);
+        cv.setUint16(14, 0, true);
+        cv.setUint32(16, crc, true);
+        cv.setUint32(20, dataBytes.length, true);
+        cv.setUint32(24, dataBytes.length, true);
+        cv.setUint16(28, nameBytes.length, true);
+        cv.setUint16(30, 0, true);
+        cv.setUint16(32, 0, true);
+        cv.setUint16(34, 0, true);
+        cv.setUint16(36, 0, true);
+        cv.setUint32(38, 0, true);
+        cv.setUint32(42, offset, true);
+        centralHeader.set(nameBytes, 46);
+
+        centralParts.push(centralHeader);
+        offset += localHeader.length + dataBytes.length;
+      }
+
+      const centralSize = centralParts.reduce((sum, p) => sum + p.length, 0);
+      const eocd = new Uint8Array(22);
+      const ev = new DataView(eocd.buffer);
+      ev.setUint32(0, 0x06054b50, true);
+      ev.setUint16(4, 0, true);
+      ev.setUint16(6, 0, true);
+      ev.setUint16(8, files.length, true);
+      ev.setUint16(10, files.length, true);
+      ev.setUint32(12, centralSize, true);
+      ev.setUint32(16, offset, true);
+      ev.setUint16(20, 0, true);
+
+      return new Blob([...localParts, ...centralParts, eocd], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
+    }
+
+    function exportRecordsToXlsx(records) {
+      const headers = [
+        '部署时间', '部署状态', '服务器', '部署方式', '项目名称',
+        'KV变量', 'KV仓库', 'ENV变量', 'ENV值',
+        '子域名', '自定义域名', 'CF域名', '项目来源', '耗时', '触发来源', '部署日志'
+      ];
+
+      const rows = [headers];
+      records.forEach(r => {
+        const kvList = normalizeKvItems(r);
+        const envList = normalizeEnvItems(r);
+
+        const kvVarsStr = kvList.map(k => (k.isNew ? '[新] ' : '[原] ') + (k.name || '')).join('\\n');
+        const kvReposStr = kvList.map(k => (k.isNew ? '[新] ' : '[原] ') + (k.repo || '') + (k.action ? ' (' + k.action + ')' : '')).join('\\n');
+        const envVarsStr = envList.map(e => (e.isNew ? '[新] ' : '[原] ') + (e.name || '')).join('\\n');
+        const envValsStr = envList.map(e => (e.isNew ? '[新] ' : '[原] ') + (e.value ?? '')).join('\\n');
+
+        rows.push([
+          r.time || '',
+          r.status || '',
+          r.server || '',
+          r.method || '',
+          r.projectName || '',
+          kvVarsStr,
+          kvReposStr,
+          envVarsStr,
+          envValsStr,
+          r.subdomain || '',
+          r.customDomains || '',
+          r.cfDomain || '',
+          r.sourceUrl || '',
+          r.duration || '',
+          r.triggerSource || '',
+          Array.isArray(r.logs) ? r.logs.join('\\n') : ''
+        ]);
+      });
+
+      const sheetRowsXml = rows.map((row, rIdx) => {
+        const rowNum = rIdx + 1;
+        const cellsXml = row.map((val, cIdx) => {
+          const ref = colIndexToLetters(cIdx) + rowNum;
+          const styleAttr = rIdx === 0 ? ' s="1"' : ' s="2"';
+          return '<c r="' + ref + '" t="inlineStr"' + styleAttr + '><is><t xml:space="preserve">' + xmlEscape(val) + '</t></is></c>';
+        }).join('');
+        return '<row r="' + rowNum + '">' + cellsXml + '</row>';
+      }).join('');
+
+      const colWidths = [20, 10, 24, 10, 18, 18, 24, 18, 24, 14, 28, 30, 36, 10, 12, 48];
+      const colsXml = '<cols>' + colWidths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>';
+
+      const worksheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        colsXml +
+        '<sheetData>' + sheetRowsXml + '</sheetData>' +
+        '</worksheet>';
+
+      const stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<fonts count="2">' +
+          '<font><sz val="10"/><name val="Arial"/></font>' +
+          '<font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Arial"/></font>' +
+        '</fonts>' +
+        '<fills count="3">' +
+          '<fill><patternFill patternType="none"/></fill>' +
+          '<fill><patternFill patternType="gray125"/></fill>' +
+          '<fill><patternFill patternType="solid"><fgColor rgb="FF1E293B"/></patternFill></fill>' +
+        '</fills>' +
+        '<borders count="2">' +
+          '<border><left/><right/><top/><bottom/><diagonal/></border>' +
+          '<border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>' +
+        '</borders>' +
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+        '<cellXfs count="3">' +
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+          '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>' +
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+        '</cellXfs>' +
+        '</styleSheet>';
+
+      const workbookXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheets><sheet name="部署记录" sheetId="1" r:id="rId1"/></sheets>' +
+        '</workbook>';
+
+      const workbookRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+        '</Relationships>';
+
+      const rootRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+        '</Relationships>';
+
+      const contentTypesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+        '</Types>';
+
+      const blob = createZipStore([
+        { name: '[Content_Types].xml', content: contentTypesXml },
+        { name: '_rels/.rels', content: rootRelsXml },
+        { name: 'xl/workbook.xml', content: workbookXml },
+        { name: 'xl/_rels/workbook.xml.rels', content: workbookRelsXml },
+        { name: 'xl/styles.xml', content: stylesXml },
+        { name: 'xl/worksheets/sheet1.xml', content: worksheetXml }
+      ]);
+
+      const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      triggerDownload(blob, 'deploy_records_' + ts + '.xlsx');
+    }
+
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    document.getElementById('btnExportXlsx').addEventListener('click', () => {
+      if (!currentFilteredRecords.length) return alert('当前没有可导出的部署记录');
+      exportRecordsToXlsx(currentFilteredRecords);
+    });
+
+    document.getElementById('btnExportJson').addEventListener('click', () => {
+      if (!currentFilteredRecords.length) return alert('当前没有可导出的部署记录');
+      const blob = new Blob([JSON.stringify(currentFilteredRecords, null, 2)], { type: 'application/json;charset=utf-8' });
+      const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      triggerDownload(blob, 'deploy_records_' + ts + '.json');
+    });
 
     document.getElementById('filterKeyword').addEventListener('input', renderRecords);
     document.getElementById('filterStatus').addEventListener('change', renderRecords);
